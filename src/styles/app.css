@@ -2057,17 +2057,18 @@ textarea.input {
   position: fixed;
   right: 18px;
   left: auto;
-  bottom: 106px; /* clears the tab bar */
+  bottom: max(calc(env(safe-area-inset-bottom) + 104px), 124px);
   width: 56px;
   height: 56px;
   border-radius: 18px;
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 20%, transparent), 0 2px 6px rgba(0, 0, 0, 0.12);
-  z-index: 80;
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--accent) 24%, transparent), 0 3px 8px rgba(0, 0, 0, 0.14);
+  z-index: 85;
   transition: transform 160ms var(--ease-out);
 }
 
