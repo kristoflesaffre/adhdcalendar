@@ -1,0 +1,271 @@
+import Capacitor
+import AVFoundation
+import UserNotifications
+import MediaPlayer
+import WidgetKit
+import WatchConnectivity
+
+/** Minimal WCSession delegate so the phone can push the next alarm to the
+ *  watch app (which schedules its own smart-alarm wake). */
+final class WatchLink: NSObject, WCSessionDelegate {
+    static let shared = WatchLink()
+
+    func activate() {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        if session.delegate == nil { session.delegate = self }
+        if session.activationState != .activated { session.activate() }
+    }
+
+    /** at == nil clears the watch alarm */
+    func sendAlarm(at: Double?, title: String?) {
+        guard WCSession.isSupported() else { return }
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+        var ctx: [String: Any] = ["cleared": at == nil]
+        if let at = at {
+            ctx["at"] = at
+            ctx["title"] = title ?? "Alarm"
+        }
+        try? session.updateApplicationContext(ctx)
+    }
+
+    func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState, error: Error?) {}
+    func sessionDidBecomeInactive(_ session: WCSession) {}
+    func sessionDidDeactivate(_ session: WCSession) { session.activate() }
+}
+
+/**
+ * The real-alarm engine. Keeps the app alive in the background with a
+ * near-silent looping audio session (category .playback — the same trick
+ * Music/Podcasts use, which also plays through the mute switch), and holds
+ * a *native* timer for the next alarm: when it fires, the loud bell loops
+ * until stop() is called (the user returning to the app) or a 10-minute
+ * safety cap. No JavaScript needs to run at ring time, so a locked phone
+ * with a suspended webview still rings.
+ *
+ * Only a fully force-quit app escapes this — nothing can revive that
+ * except the scheduled local-notification chain (see LocalNotifications).
+ */
+@objc(AlarmAudioPlugin)
+public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "AlarmAudioPlugin"
+    public let jsName = "AlarmAudio"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "startKeepAlive", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "scheduleRing", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelRing", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "ring", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setWidgetData", returnType: CAPPluginReturnPromise),
+    ]
+
+    static let appGroup = "group.be.adhdcalendar.app"
+
+    public override func load() {
+        WatchLink.shared.activate()
+    }
+
+    private var player: AVAudioPlayer?
+    private var ringTimer: DispatchSourceTimer?
+    private var capTimer: DispatchSourceTimer?
+    private let maxRingSeconds: Double = 600
+    private let minAlarmVolume: Float = 0.6
+    private let volumeView = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 10, height: 10))
+    private let bannerId = "alarm-ring-banner"
+    private var ringTitle: String?
+    private var ringBody: String?
+
+    private func activateSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [])
+        try session.setActive(true)
+    }
+
+    @discardableResult
+    private func play(resource: String) -> Bool {
+        guard let url = Bundle.main.url(forResource: resource, withExtension: "wav") else {
+            return false
+        }
+        do {
+            try activateSession()
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.numberOfLoops = -1
+            p.volume = 1.0
+            p.play()
+            player?.stop()
+            player = p
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func playSilence() {
+        play(resource: "silence")
+    }
+
+    /**
+     * A real alarm clock refuses to be silenced by a media volume that was
+     * dialed to zero hours earlier. If the system output volume is below
+     * the floor, push it up via MPVolumeView (the standard alarm-app
+     * technique) right as the bell starts.
+     */
+    private func ensureLoudEnough() {
+        DispatchQueue.main.async {
+            if self.volumeView.superview == nil {
+                let window = UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .flatMap { $0.windows }
+                    .first
+                window?.addSubview(self.volumeView)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                let current = AVAudioSession.sharedInstance().outputVolume
+                if current < self.minAlarmVolume,
+                   let slider = self.volumeView.subviews.compactMap({ $0 as? UISlider }).first {
+                    slider.value = self.minAlarmVolume
+                }
+            }
+        }
+    }
+
+    /**
+     * The pending notification chain gets cancelled once the live bell
+     * rings (no double audio) — but the lock screen should still SHOW
+     * what's ringing. Post one immediate, soundless banner instead.
+     */
+    private func showSilentBanner() {
+        let content = UNMutableNotificationContent()
+        content.title = ringTitle ?? "⏰ Alarm"
+        content.body = ringBody ?? "Ringing — open the app to stop"
+        content.sound = nil
+        if #available(iOS 15.0, *) {
+            // more prominent on the lock screen AND on a paired Apple Watch
+            content.interruptionLevel = .timeSensitive
+        }
+        let request = UNNotificationRequest(identifier: bannerId, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /** Store today's items for the home-screen widget (app group storage). */
+    @objc func setWidgetData(_ call: CAPPluginCall) {
+        guard let json = call.getString("json") else {
+            call.reject("missing 'json'")
+            return
+        }
+        guard let defaults = UserDefaults(suiteName: AlarmAudioPlugin.appGroup) else {
+            call.reject("app group not configured")
+            return
+        }
+        defaults.set(json, forKey: "widget-data")
+        if #available(iOS 14.0, *) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        call.resolve()
+    }
+
+    private func playAlarm() {
+        guard play(resource: "alarm") else { return }
+        ensureLoudEnough()
+        showSilentBanner()
+        // the notification chain is only the fallback for a force-quit app;
+        // now that the live loop is ringing, imminent notifications would
+        // just overlap it — drop the ones due in the next 10 minutes
+        cancelImminentNotifications()
+        // safety cap: after 10 minutes of unanswered ringing, back to keep-alive
+        capTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + maxRingSeconds)
+        t.setEventHandler { [weak self] in self?.playSilence() }
+        t.resume()
+        capTimer = t
+    }
+
+    private func cancelImminentNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let soon = Date().addingTimeInterval(10 * 60)
+            let ids = requests.compactMap { req -> String? in
+                var fireDate: Date?
+                if let t = req.trigger as? UNCalendarNotificationTrigger {
+                    fireDate = t.nextTriggerDate()
+                } else if let t = req.trigger as? UNTimeIntervalNotificationTrigger {
+                    fireDate = t.nextTriggerDate()
+                }
+                if let d = fireDate, d <= soon {
+                    return req.identifier
+                }
+                return nil
+            }
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+    }
+
+    @objc func startKeepAlive(_ call: CAPPluginCall) {
+        if player == nil {
+            playSilence()
+        }
+        player != nil ? call.resolve() : call.reject("silence.wav not bundled")
+    }
+
+    /** Arm the native timer for the next alarm (epoch milliseconds). */
+    @objc func scheduleRing(_ call: CAPPluginCall) {
+        guard let atMs = call.getDouble("at") else {
+            call.reject("missing 'at'")
+            return
+        }
+        ringTitle = call.getString("title")
+        ringBody = call.getString("body")
+        if player == nil {
+            playSilence() // the session must be live before the phone locks
+        }
+        ringTimer?.cancel()
+        let delay = max(0, atMs / 1000 - Date().timeIntervalSince1970)
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + delay)
+        t.setEventHandler { [weak self] in self?.playAlarm() }
+        t.resume()
+        ringTimer = t
+        // mirror to the watch so it can wake the wrist at the same moment
+        WatchLink.shared.sendAlarm(at: atMs, title: ringTitle)
+        call.resolve()
+    }
+
+    @objc func cancelRing(_ call: CAPPluginCall) {
+        ringTimer?.cancel()
+        ringTimer = nil
+        WatchLink.shared.sendAlarm(at: nil, title: nil)
+        call.resolve()
+    }
+
+    /** Ring immediately (backup path used when JS happens to be awake). */
+    @objc func ring(_ call: CAPPluginCall) {
+        playAlarm()
+        call.resolve()
+    }
+
+    /** Stop the bell but keep the quiet keep-alive so future alarms work. */
+    @objc func stop(_ call: CAPPluginCall) {
+        capTimer?.cancel()
+        capTimer = nil
+        playSilence()
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [bannerId])
+        call.resolve()
+    }
+}
+
+/**
+ * Capacitor only auto-registers plugins that live in npm packages (the CLI
+ * scans those to build packageClassList) — app-local plugins like the one
+ * above must be registered in code. The storyboard points at this subclass.
+ */
+// no @objc rename here: the storyboard looks the class up as
+// "App.AlarmViewController", which only matches the default Swift name
+class AlarmViewController: CAPBridgeViewController {
+    override func capacitorDidLoad() {
+        bridge?.registerPluginInstance(AlarmAudioPlugin())
+    }
+}
