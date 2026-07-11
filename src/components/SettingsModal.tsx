@@ -10,6 +10,7 @@ import {
 import { armTestRing } from '../native/alarmAudio';
 import type { NotificationPermState } from '../native/alarms';
 import type { ThemePref } from '../types';
+import { ALARM_SOUNDS, getAlarmSound } from '../alarm/sounds';
 import { BellFilled, Close, GoogleG } from './icons';
 
 function isNative(): boolean {
@@ -26,6 +27,7 @@ const DEFAULT_ALARM_CHOICES = [5, 10, 15, 20, 30, 60];
 export function SettingsModal({ onClose, onOpenGoogle }: Props) {
   const { state, dispatch } = useStore();
   const { settings } = state;
+  const alarmSound = getAlarmSound(settings.alarmSound);
   const [notifState, setNotifState] = useState(
     'Notification' in window ? Notification.permission : 'unsupported',
   );
@@ -51,6 +53,11 @@ export function SettingsModal({ onClose, onOpenGoogle }: Props) {
     const cur = settings.defaultAlarms;
     const next = cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].sort((a, b) => b - a);
     dispatch({ type: 'settings/update', patch: { defaultAlarms: next } });
+  };
+
+  const setAlarmSound = (id: string) => {
+    dispatch({ type: 'settings/update', patch: { alarmSound: getAlarmSound(id).id } });
+    setTestMsg('');
   };
 
   const askNotifications = async () => {
@@ -105,12 +112,29 @@ export function SettingsModal({ onClose, onOpenGoogle }: Props) {
                 </button>
               ))}
             </div>
+            <label className="field-label" htmlFor="alarm-sound">
+              Alarm sound
+            </label>
+            <div className="alarm-sound-row">
+              <select
+                id="alarm-sound"
+                className="input grow"
+                value={alarmSound.id}
+                onChange={(e) => setAlarmSound(e.target.value)}
+              >
+                {ALARM_SOUNDS.map((sound) => (
+                  <option key={sound.id} value={sound.id}>
+                    {sound.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button
                 className="btn btn-ghost"
                 onClick={() => {
                   ensureAudioUnlocked();
-                  testStrike();
+                  testStrike(alarmSound.id);
                 }}
               >
                 Test alarm sound
@@ -152,8 +176,8 @@ export function SettingsModal({ onClose, onOpenGoogle }: Props) {
                   <button
                     className="btn btn-ghost"
                     onClick={async () => {
-                      await scheduleTestAlarm(15);
-                      await armTestRing(15);
+                      await scheduleTestAlarm(15, alarmSound.id);
+                      await armTestRing(15, alarmSound.id);
                       setTestMsg(
                         'Scheduled — lock your phone now. In 15s the bell starts ringing (even in silent mode) and keeps going until you come back to the app.',
                       );

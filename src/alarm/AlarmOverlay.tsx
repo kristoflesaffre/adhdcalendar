@@ -7,6 +7,7 @@ import { stopNativeAlarm } from '../native/alarmAudio';
 
 interface Props {
   alarms: RingingAlarm[];
+  alarmSound?: string;
   onDismiss: (key: string) => void;
   onSnooze: (key: string, minutes: number) => void;
 }
@@ -15,7 +16,7 @@ interface Props {
  * The signature moment: a full-screen takeover that rings until you stop it.
  * Shows the frontmost alarm; others queue behind it.
  */
-export function AlarmOverlay({ alarms, onDismiss, onSnooze }: Props) {
+export function AlarmOverlay({ alarms, alarmSound, onDismiss, onSnooze }: Props) {
   const bellRef = useRef<AlarmBell | null>(null);
   const [now, setNow] = useState(Date.now());
   const alarm = alarms[0];
@@ -23,7 +24,7 @@ export function AlarmOverlay({ alarms, onDismiss, onSnooze }: Props) {
   useEffect(() => {
     if (!alarm) return;
     if (!bellRef.current) bellRef.current = new AlarmBell();
-    bellRef.current.start();
+    bellRef.current.start(alarmSound);
     // hand off from the native background ring (if it was playing while
     // backgrounded) to this foreground overlay's own bell, so they don't
     // layer on top of each other
@@ -40,7 +41,7 @@ export function AlarmOverlay({ alarms, onDismiss, onSnooze }: Props) {
       if (alarms.length <= 1) bellRef.current?.stop();
     };
     // restart per frontmost alarm
-  }, [alarm?.key]);
+  }, [alarm?.key, alarmSound]);
 
   useEffect(() => {
     if (alarms.length === 0) bellRef.current?.stop();

@@ -111,7 +111,7 @@ export function MenuDrawer({ open, view, onClose, onView, onEditCalendar, onOpen
                 </span>
               )}
               <button
-                className="icon-btn"
+                className="icon-btn menu-cal-edit"
                 style={{ width: 32, height: 32 }}
                 aria-label={`Edit ${cal.name}`}
                 onClick={() => {
@@ -119,7 +119,7 @@ export function MenuDrawer({ open, view, onClose, onView, onEditCalendar, onOpen
                   onEditCalendar(cal);
                 }}
               >
-                <Pencil size={13} />
+                <Pencil size={9} />
               </button>
             </li>
           ))}

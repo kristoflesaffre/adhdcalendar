@@ -7,7 +7,7 @@ interface Props {
   children: ReactNode;
 }
 
-const EXIT_MS = 240;
+const EXIT_MS = 310; // just past the 300ms CSS exit transition
 
 /** Slide-out panel that animates both in (via @starting-style) and out
  *  (kept mounted with an is-closing class until the exit finishes). */

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useReducer } from 'react
 import type { ReactNode } from 'react';
 import type { AppState, CalendarInfo, EventItem, Settings, TaskItem } from '../types';
 import { MS_HOUR, addDays, setMinutesOfDay, startOfDay } from '../lib/dates';
+import { DEFAULT_ALARM_SOUND, getAlarmSound } from '../alarm/sounds';
 
 const STORAGE_KEY = 'carillon.v1';
 
@@ -12,6 +13,7 @@ export function uid(): string {
 const defaultSettings: Settings = {
   theme: 'system',
   googleClientId: '',
+  alarmSound: DEFAULT_ALARM_SOUND,
   defaultAlarms: [10],
   weekStartsOn: 1,
 };
@@ -72,11 +74,12 @@ function load(): AppState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return seedState();
     const parsed = JSON.parse(raw) as AppState;
+    const settings = { ...defaultSettings, ...parsed.settings };
     return {
       calendars: parsed.calendars ?? [],
       events: parsed.events ?? [],
       tasks: parsed.tasks ?? [],
-      settings: { ...defaultSettings, ...parsed.settings },
+      settings: { ...settings, alarmSound: getAlarmSound(settings.alarmSound).id },
     };
   } catch {
     return seedState();

@@ -17,6 +17,11 @@
 		82B2F3DF300188190000AF1E /* alarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F3DC300188190000AF1E /* alarm.wav */; };
 		82B2F3E0300188190000AF1E /* silence.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F3DE300188190000AF1E /* silence.wav */; };
 		82B2F3E1300188190000AF1E /* AlarmAudioPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82B2F3DD300188190000AF1E /* AlarmAudioPlugin.swift */; };
+		82B2F4013001A0010000AF1E /* tokyo-rain.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F4113001A0010000AF1E /* tokyo-rain.wav */; };
+		82B2F4023001A0010000AF1E /* immensity.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F4123001A0010000AF1E /* immensity.wav */; };
+		82B2F4033001A0010000AF1E /* hyper-techno.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F4133001A0010000AF1E /* hyper-techno.wav */; };
+		82B2F4043001A0010000AF1E /* chill-step.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F4143001A0010000AF1E /* chill-step.wav */; };
+		82B2F4053001A0010000AF1E /* timelapse.wav in Resources */ = {isa = PBXBuildFile; fileRef = 82B2F4153001A0010000AF1E /* timelapse.wav */; };
 		82CD706530027F7300048D96 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 82CD706430027F7300048D96 /* WidgetKit.framework */; };
 		82CD706730027F7300048D96 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 82CD706630027F7300048D96 /* SwiftUI.framework */; };
 		82CD707630027F7500048D96 /* ADHDWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 82CD706330027F7300048D96 /* ADHDWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -61,6 +66,11 @@
 		82B2F3DC300188190000AF1E /* alarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = alarm.wav; sourceTree = "<group>"; };
 		82B2F3DD300188190000AF1E /* AlarmAudioPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlarmAudioPlugin.swift; sourceTree = "<group>"; };
 		82B2F3DE300188190000AF1E /* silence.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = silence.wav; sourceTree = "<group>"; };
+		82B2F4113001A0010000AF1E /* tokyo-rain.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "tokyo-rain.wav"; sourceTree = "<group>"; };
+		82B2F4123001A0010000AF1E /* immensity.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = immensity.wav; sourceTree = "<group>"; };
+		82B2F4133001A0010000AF1E /* hyper-techno.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "hyper-techno.wav"; sourceTree = "<group>"; };
+		82B2F4143001A0010000AF1E /* chill-step.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "chill-step.wav"; sourceTree = "<group>"; };
+		82B2F4153001A0010000AF1E /* timelapse.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = timelapse.wav; sourceTree = "<group>"; };
 		82CD706330027F7300048D96 /* ADHDWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ADHDWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		82CD706430027F7300048D96 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		82CD706630027F7300048D96 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -118,6 +128,11 @@
 			isa = PBXGroup;
 			children = (
 				82B2F3DC300188190000AF1E /* alarm.wav */,
+				82B2F4113001A0010000AF1E /* tokyo-rain.wav */,
+				82B2F4123001A0010000AF1E /* immensity.wav */,
+				82B2F4133001A0010000AF1E /* hyper-techno.wav */,
+				82B2F4143001A0010000AF1E /* chill-step.wav */,
+				82B2F4153001A0010000AF1E /* timelapse.wav */,
 				82B2F3DD300188190000AF1E /* AlarmAudioPlugin.swift */,
 				82B2F3DE300188190000AF1E /* silence.wav */,
 				504EC3061FED79650016851F /* App */,
@@ -258,6 +273,11 @@
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				82B2F3DF300188190000AF1E /* alarm.wav in Resources */,
+				82B2F4013001A0010000AF1E /* tokyo-rain.wav in Resources */,
+				82B2F4023001A0010000AF1E /* immensity.wav in Resources */,
+				82B2F4033001A0010000AF1E /* hyper-techno.wav in Resources */,
+				82B2F4043001A0010000AF1E /* chill-step.wav in Resources */,
+				82B2F4053001A0010000AF1E /* timelapse.wav in Resources */,
 				82B2F3E0300188190000AF1E /* silence.wav in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,

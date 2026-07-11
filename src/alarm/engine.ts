@@ -165,7 +165,7 @@ export function useAlarmEngine(state: AppState): {
         for (const d of due) void notifySystem({ ...d.base, firedAt: now });
         // backgrounded/locked: the in-app bell can't be heard, so ring
         // through the native background audio session instead
-        if (document.hidden) void ringNativeAlarm();
+        if (document.hidden) void ringNativeAlarm(stateRef.current.settings.alarmSound);
       }
       if (due.length || pruned) saveJson(FIRED_KEY, fired);
 
@@ -183,6 +183,7 @@ export function useAlarmEngine(state: AppState): {
               (nextFuture.base.location ? ` · ${nextFuture.base.location}` : '') +
               ' — ringing, open the app to stop'
           : undefined,
+        stateRef.current.settings.alarmSound,
       );
     };
 
@@ -202,7 +203,7 @@ export function useAlarmEngine(state: AppState): {
   useEffect(() => {
     const now = Date.now();
     const pending = computePending(state, now).filter((p) => p.triggerAt > now);
-    void syncNativeAlarms(pending.slice(0, 24));
+    void syncNativeAlarms(pending.slice(0, 24), state.settings.alarmSound);
     // keep the app alive in the background so it can ring for real,
     // rather than relying only on the OS notification chain
     if (pending.length > 0) void startBackgroundKeepAlive();

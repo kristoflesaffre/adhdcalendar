@@ -1,9 +1,9 @@
+import { getAlarmSound } from './sounds';
+
 /**
- * The in-app alarm sound — La Cucaracha on a synthesized marimba, no audio
- * files needed. Mirrors the bundled alarm.wav (scripts/gen-sounds.mjs):
- * same melody, same voice, so the lock-screen ring and the in-app overlay
- * sound like one instrument. Each pass swells a little; every third pass
- * jumps an octave for urgency.
+ * Foreground alarm audio. User-selected WAV files are played through Web
+ * Audio so the in-app overlay matches the native iOS ring. The old marimba
+ * phrase stays as a fallback if a browser cannot fetch or decode the file.
  */
 
 let ctx: AudioContext | null = null;
@@ -62,43 +62,63 @@ const MELODY: [number, number][] = [
 ];
 const BEAT = 0.414; // ≈145 BPM
 const PASS_SEC = MELODY.reduce((s, [, b]) => s + b, 0) * BEAT;
+const bufferCache = new Map<string, Promise<AudioBuffer>>();
+
+async function loadAlarmBuffer(soundId?: string): Promise<AudioBuffer> {
+  ensureAudioUnlocked();
+  if (!ctx) throw new Error('AudioContext unavailable');
+  const sound = getAlarmSound(soundId);
+  let promise = bufferCache.get(sound.id);
+  if (!promise) {
+    promise = fetch(sound.webUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Unable to load ${sound.fileName}`);
+        return res.arrayBuffer();
+      })
+      .then((data) => ctx!.decodeAudioData(data));
+    bufferCache.set(sound.id, promise);
+  }
+  return promise;
+}
 
 export class AlarmBell {
   private master: GainNode | null = null;
+  private source: AudioBufferSourceNode | null = null;
   private timer: number | null = null;
   private pass = 0;
+  private run = 0;
 
   get playing(): boolean {
-    return this.timer !== null;
+    return this.master !== null;
   }
 
-  start(): void {
+  start(soundId?: string): void {
     ensureAudioUnlocked();
-    if (!ctx || this.timer !== null) return;
+    if (!ctx || this.master) return;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.5;
+    this.master.gain.value = 0.85;
     this.master.connect(ctx.destination);
     this.pass = 0;
+    this.run++;
+    const run = this.run;
 
-    const schedulePass = () => {
-      if (!ctx || !this.master) return;
-      const amp = Math.min(0.55 + this.pass * 0.15, 1.0);
-      const octave = this.pass % 4 === 2 ? 2 : 1;
-      let t = ctx.currentTime + 0.05;
-      for (const [hz, beats] of MELODY) {
-        strike(t, hz * octave, amp, this.master);
-        t += beats * BEAT;
-      }
-      this.pass++;
-      this.timer = window.setTimeout(schedulePass, PASS_SEC * 1000);
-    };
-    schedulePass();
+    void this.startFileLoop(soundId, run);
   }
 
   stop(): void {
+    this.run++;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch {
+        // already stopped
+      }
+      this.source.disconnect();
+      this.source = null;
     }
     if (this.master && ctx) {
       const g = this.master.gain;
@@ -109,11 +129,63 @@ export class AlarmBell {
       this.master = null;
     }
   }
+
+  private async startFileLoop(soundId: string | undefined, run: number): Promise<void> {
+    try {
+      const buffer = await loadAlarmBuffer(soundId);
+      if (!ctx || !this.master || this.run !== run) return;
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(this.master);
+      source.start();
+      this.source = source;
+    } catch {
+      if (this.run === run) this.scheduleSyntheticPass();
+    }
+  }
+
+  private scheduleSyntheticPass(): void {
+    if (!ctx || !this.master) return;
+    const amp = Math.min(0.55 + this.pass * 0.15, 1.0);
+    const octave = this.pass % 4 === 2 ? 2 : 1;
+    let t = ctx.currentTime + 0.05;
+    for (const [hz, beats] of MELODY) {
+      strike(t, hz * octave, amp, this.master);
+      t += beats * BEAT;
+    }
+    this.pass++;
+    this.timer = window.setTimeout(() => this.scheduleSyntheticPass(), PASS_SEC * 1000);
+  }
 }
 
-/** Preview for the "Test alarm sound" button: the opening phrase */
-export function testStrike(): void {
+/** Preview for the "Test alarm sound" button. */
+export function testStrike(soundId?: string): void {
   ensureAudioUnlocked();
+  if (!ctx) return;
+  const run = Date.now();
+  void playFilePreview(soundId, run);
+}
+
+async function playFilePreview(soundId: string | undefined, run: number): Promise<void> {
+  try {
+    const buffer = await loadAlarmBuffer(soundId);
+    if (!ctx || run === 0) return;
+    const g = ctx.createGain();
+    g.gain.value = 0.85;
+    g.connect(ctx.destination);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(g);
+    source.start();
+    source.stop(ctx.currentTime + 5);
+    setTimeout(() => g.disconnect(), 5400);
+  } catch {
+    playSyntheticPreview();
+  }
+}
+
+function playSyntheticPreview(): void {
   if (!ctx) return;
   const g = ctx.createGain();
   g.gain.value = 0.5;

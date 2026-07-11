@@ -685,7 +685,12 @@ export default function App() {
       {googleOpen && <GoogleConnectModal onClose={() => setGoogleOpen(false)} />}
       {calEditor && <CalendarEditor calendar={calEditor.cal} onClose={() => setCalEditor(null)} />}
 
-      <AlarmOverlay alarms={ringing} onDismiss={dismiss} onSnooze={snooze} />
+      <AlarmOverlay
+        alarms={ringing}
+        alarmSound={state.settings.alarmSound}
+        onDismiss={dismiss}
+        onSnooze={snooze}
+      />
     </div>
   );
 }

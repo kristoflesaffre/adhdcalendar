@@ -1,4 +1,5 @@
 import { registerPlugin } from '@capacitor/core';
+import { alarmSoundResource } from '../alarm/sounds';
 
 /**
  * Bridge to the custom AlarmAudioPlugin (ios/App/AlarmAudioPlugin.swift).
@@ -12,9 +13,9 @@ import { registerPlugin } from '@capacitor/core';
  */
 interface AlarmAudioPlugin {
   startKeepAlive(): Promise<void>;
-  scheduleRing(options: { at: number; title?: string; body?: string }): Promise<void>;
+  scheduleRing(options: { at: number; title?: string; body?: string; sound?: string }): Promise<void>;
   cancelRing(): Promise<void>;
-  ring(): Promise<void>;
+  ring(options?: { sound?: string }): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -50,25 +51,27 @@ export async function armNativeRing(
   atMs: number | null,
   title?: string,
   body?: string,
+  soundId?: string,
 ): Promise<void> {
   if (!isNative()) return;
   if (Date.now() < testRingUntil) return; // don't clobber an active test
-  const key = atMs === null ? 'off' : `${atMs}|${title ?? ''}`;
+  const sound = alarmSoundResource(soundId);
+  const key = atMs === null ? 'off' : `${atMs}|${title ?? ''}|${sound}`;
   if (key === lastArmed) return;
   lastArmed = key;
   try {
     if (atMs === null) await AlarmAudio.cancelRing();
-    else await AlarmAudio.scheduleRing({ at: atMs, title, body });
+    else await AlarmAudio.scheduleRing({ at: atMs, title, body, sound });
   } catch {
     // ignore — fallback paths still apply
   }
 }
 
 /** Ring right now (backup path used when JS happens to be awake) */
-export async function ringNativeAlarm(): Promise<void> {
+export async function ringNativeAlarm(soundId?: string): Promise<void> {
   if (!isNative()) return;
   try {
-    await AlarmAudio.ring();
+    await AlarmAudio.ring({ sound: alarmSoundResource(soundId) });
   } catch {
     // ignore
   }
@@ -89,7 +92,7 @@ export async function stopNativeAlarm(): Promise<void> {
  * `afterSeconds` from now. Lock the phone; it rings — through silent
  * mode — until you return to the app (which stops it) or the 10-min cap.
  */
-export async function armTestRing(afterSeconds: number): Promise<void> {
+export async function armTestRing(afterSeconds: number, soundId?: string): Promise<void> {
   if (!isNative()) return;
   const at = Date.now() + afterSeconds * 1000;
   testRingUntil = at + 60_000; // shield the test from engine re-arming
@@ -98,6 +101,7 @@ export async function armTestRing(afterSeconds: number): Promise<void> {
       at,
       title: '🔔 Test alarm',
       body: 'Ringing — open the app to stop',
+      sound: alarmSoundResource(soundId),
     });
   } catch {
     testRingUntil = 0;

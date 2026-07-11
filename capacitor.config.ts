@@ -12,8 +12,8 @@ const config: CapacitorConfig = {
   },
   plugins: {
     LocalNotifications: {
-      // the app's own bell, bundled as a real file — iOS plays nothing for
-      // sound names that don't resolve to a bundled resource
+      // fallback sound; individual alarms pass the user's selected bundled
+      // .wav file so iOS can resolve it as a notification resource
       sound: 'alarm.wav',
     },
   },

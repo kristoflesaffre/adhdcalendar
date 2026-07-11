@@ -1,3 +1,5 @@
+import type { AlarmSoundId } from './alarm/sounds';
+
 export type ViewMode = 'schedule' | 'day' | '3day' | 'week' | 'month';
 
 export type CalendarSource = 'local' | 'google' | 'ics';
@@ -112,6 +114,7 @@ export type ThemePref = 'system' | 'light' | 'dark';
 export interface Settings {
   theme: ThemePref;
   googleClientId: string;
+  alarmSound: AlarmSoundId;
   /** default alarm offsets (minutes) applied to new events when enabled */
   defaultAlarms: number[];
   weekStartsOn: 0 | 1;

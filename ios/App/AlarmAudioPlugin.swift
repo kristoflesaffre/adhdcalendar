@@ -73,6 +73,8 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private let minAlarmVolume: Float = 0.6
     private let volumeView = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 10, height: 10))
     private let bannerId = "alarm-ring-banner"
+    private let fallbackAlarmResource = "alarm"
+    private var ringResource = "alarm"
     private var ringTitle: String?
     private var ringBody: String?
 
@@ -103,6 +105,14 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func playSilence() {
         play(resource: "silence")
+    }
+
+    private func validAlarmResource(_ resource: String?) -> String {
+        guard let resource = resource,
+              Bundle.main.url(forResource: resource, withExtension: "wav") != nil else {
+            return fallbackAlarmResource
+        }
+        return resource
     }
 
     /**
@@ -166,7 +176,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     private func playAlarm() {
-        guard play(resource: "alarm") else { return }
+        guard play(resource: ringResource) else { return }
         ensureLoudEnough()
         showSilentBanner()
         // the notification chain is only the fallback for a force-quit app;
@@ -219,6 +229,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         ringTitle = call.getString("title")
         ringBody = call.getString("body")
+        ringResource = validAlarmResource(call.getString("sound"))
         if player == nil {
             playSilence() // the session must be live before the phone locks
         }
@@ -243,6 +254,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /** Ring immediately (backup path used when JS happens to be awake). */
     @objc func ring(_ call: CAPPluginCall) {
+        ringResource = validAlarmResource(call.getString("sound"))
         playAlarm()
         call.resolve()
     }
