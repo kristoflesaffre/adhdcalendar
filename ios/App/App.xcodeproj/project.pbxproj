@@ -497,8 +497,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 625W5WQ577;
-				GOOGLE_IOS_CLIENT_ID = "";
-				GOOGLE_IOS_REVERSED_CLIENT_ID = "";
+				GOOGLE_IOS_CLIENT_ID = "367256267734-iceufmhf09gaqiklgats1rm725inkdeb.apps.googleusercontent.com";
+				GOOGLE_IOS_REVERSED_CLIENT_ID = "com.googleusercontent.apps.367256267734-iceufmhf09gaqiklgats1rm725inkdeb";
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -524,8 +524,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 625W5WQ577;
-				GOOGLE_IOS_CLIENT_ID = "";
-				GOOGLE_IOS_REVERSED_CLIENT_ID = "";
+				GOOGLE_IOS_CLIENT_ID = "367256267734-iceufmhf09gaqiklgats1rm725inkdeb.apps.googleusercontent.com";
+				GOOGLE_IOS_REVERSED_CLIENT_ID = "com.googleusercontent.apps.367256267734-iceufmhf09gaqiklgats1rm725inkdeb";
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
