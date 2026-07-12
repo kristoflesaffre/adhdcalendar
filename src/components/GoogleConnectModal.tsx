@@ -38,7 +38,7 @@ export function GoogleConnectModal({ onClose }: Props) {
   const [clientId, setClientId] = useState(state.settings.googleClientId);
   const [gcals, setGcals] = useState<GoogleCalendarListEntry[] | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
-  const [showWizard, setShowWizard] = useState(!state.settings.googleClientId);
+  const [showWizard, setShowWizard] = useState(!nativeApp && !state.settings.googleClientId);
 
   // read-only (secret address)
   const [url, setUrl] = useState('');
@@ -62,18 +62,18 @@ export function GoogleConnectModal({ onClose }: Props) {
   /* ---- two-way: sign in, list calendars ---- */
   const signIn = async () => {
     const id = clientId.trim();
-    if (!id) {
+    if (!nativeApp && !id) {
       setError('Finish step 5 first, then paste the Client ID in the box above the Sign in button.');
       return;
     }
-    if (!/\.apps\.googleusercontent\.com$/.test(id)) {
+    if (!nativeApp && !/\.apps\.googleusercontent\.com$/.test(id)) {
       setError('That doesn’t look like a Client ID — it should end in .apps.googleusercontent.com (step 5).');
       return;
     }
     setBusy(true);
     setError('');
     setOkMsg('');
-    dispatch({ type: 'settings/update', patch: { googleClientId: id } });
+    if (!nativeApp) dispatch({ type: 'settings/update', patch: { googleClientId: id } });
     try {
       const token = await getAccessToken(id);
       if (!token)
@@ -94,7 +94,7 @@ export function GoogleConnectModal({ onClose }: Props) {
 
   const importTwoWay = async () => {
     const id = clientId.trim();
-    if (!gcals || !id) return;
+    if (!gcals || (!nativeApp && !id)) return;
     setBusy(true);
     setError('');
     try {
@@ -226,32 +226,38 @@ export function GoogleConnectModal({ onClose }: Props) {
             </p>
             {nativeApp && (
               <p className="settings-hint">
-                On iPhone, this two-way sign-in needs a native Google login flow. The quick read-only link
-                below works in the iPhone app today; full two-way sync on iPhone needs that native login added.
+                On iPhone this uses the native Google sign-in configured in Xcode with an iOS OAuth Client ID.
+                You do not need the web Client ID field here.
               </p>
             )}
             {showWizard && <GoogleSetupWizard />}
             <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                className="input"
-                style={{ flex: 1 }}
-                placeholder="Paste the Client ID from step 5 here…"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && signIn()}
-              />
+              {!nativeApp && (
+                <input
+                  className="input"
+                  style={{ flex: 1 }}
+                  placeholder="Paste the Client ID from step 5 here…"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && signIn()}
+                />
+              )}
               <button className="btn" onClick={signIn} disabled={busy}>
-                <GoogleG size={13} /> {busy && !gcals ? 'Connecting…' : 'Sign in'}
+                <GoogleG size={13} /> {busy && !gcals ? 'Connecting…' : nativeApp ? 'Sign in on iPhone' : 'Sign in'}
               </button>
             </div>
-            <p className="settings-hint" style={{ margin: 0 }}>
-              Google will warn that the app “isn’t verified” — that’s normal for a personal app: click{' '}
-              <strong>Continue</strong>.{' '}
-              <button className="linkish" type="button" onClick={() => setShowWizard((s) => !s)}>
-                {showWizard ? 'Hide setup steps' : 'Show the setup steps'}
-              </button>
-            </p>
-            <SignInTroubleshooting />
+            {!nativeApp && (
+              <>
+                <p className="settings-hint" style={{ margin: 0 }}>
+                  Google will warn that the app “isn’t verified” — that’s normal for a personal app: click{' '}
+                  <strong>Continue</strong>.{' '}
+                  <button className="linkish" type="button" onClick={() => setShowWizard((s) => !s)}>
+                    {showWizard ? 'Hide setup steps' : 'Show the setup steps'}
+                  </button>
+                </p>
+                <SignInTroubleshooting />
+              </>
+            )}
             {gcals && (
               <>
                 <div className="gcal-list">

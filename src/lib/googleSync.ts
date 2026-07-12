@@ -5,6 +5,7 @@ import {
   gInsertEvent,
   gPatchEvent,
   getAccessToken,
+  isNativeGoogleAuth,
   toGoogleResource,
 } from './google';
 
@@ -126,7 +127,7 @@ type OnSynced = (localEventId: string, googleEventId: string) => void;
  * an interactive sign-in.
  */
 export async function flushQueue(clientId: string, onSynced: OnSynced): Promise<number> {
-  if (flushing || queue.length === 0 || !clientId) return queue.length;
+  if (flushing || queue.length === 0 || (!clientId && !isNativeGoogleAuth())) return queue.length;
   flushing = true;
   phase = 'syncing';
   notify();

@@ -35,7 +35,7 @@ import { dayKey } from './components/MiniMonth';
 import { parseIcs } from './lib/ics';
 import { fetchIcsText, googleIdFromIcsUrl } from './lib/icsUrl';
 import { flushQueue, queueDelete, queueUpsert, scheduleFlush } from './lib/googleSync';
-import { fetchGoogleEvents, getAccessToken } from './lib/google';
+import { fetchGoogleEvents, getAccessToken, isNativeGoogleAuth } from './lib/google';
 import { MOBILE_QUERY, useIsMobile } from './hooks/useIsMobile';
 import { scheduleWidgetUpdate } from './native/widget';
 
@@ -151,7 +151,7 @@ export default function App() {
       // 2) two-way calendars: push pending local changes first, then pull
       const twoWay = state.calendars.filter((c) => c.googleId && !c.icsUrl);
       const clientId = state.settings.googleClientId;
-      if (!twoWay.length || !clientId) return;
+      if (!twoWay.length || (!clientId && !isNativeGoogleAuth())) return;
       const left = await flushQueue(clientId, onSynced);
       if (left > 0 || cancelled) return; // sign-in needed or offline — pull would clobber local edits
       const token = await getAccessToken(clientId);

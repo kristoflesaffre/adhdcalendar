@@ -41,6 +41,11 @@ npm run ios:open     # opens Xcode; run on your iPhone
 
 On iOS, every upcoming alarm is scheduled as a **chain of local notifications** (8 notifications, 30 s apart) so a closed app still nags like an alarm; opening the app and dismissing cancels the rest of the chain. For alarms that bypass the mute switch, request Apple's **critical alerts** entitlement and set `critical: true` on the notifications — see `src/native/alarms.ts`.
 
+Google two-way sync on iPhone uses native Google Sign-In. In Google Cloud, create an **iOS** OAuth Client ID for bundle ID `be.adhdcalendar.app`, then fill these App target build settings in Xcode:
+
+- `GOOGLE_IOS_CLIENT_ID`
+- `GOOGLE_IOS_REVERSED_CLIENT_ID`
+
 Note: the Google "secret address" feed is fetched natively (no CORS) inside the iOS app via CapacitorHttp; in the browser it goes through the Vite dev-server proxy.
 
 ## Stack

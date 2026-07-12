@@ -1,6 +1,9 @@
 import type { CalendarInfo, EventItem, Recurrence } from '../types';
 import { MS_DAY } from './dates';
 import { uid } from '../state/store';
+import { isNativeGoogleAuth, nativeGoogleSignIn } from '../native/googleAuth';
+
+export { isNativeGoogleAuth } from '../native/googleAuth';
 
 /**
  * Google Calendar two-way sync via Google Identity Services (token flow) +
@@ -63,24 +66,24 @@ export function getLastAuthError(): string | null {
   return lastAuthError;
 }
 
-function isNativeApp(): boolean {
-  return !!(window as any).Capacitor?.isNativePlatform?.();
-}
-
 /**
  * Get an access token. After the first consent this is usually silent
  * (no popup). Returns null when sign-in is needed but couldn't happen —
  * check getLastAuthError() for a human-readable reason.
  */
 export async function getAccessToken(clientId: string): Promise<string | null> {
+  lastAuthError = null;
+  if (isNativeGoogleAuth()) {
+    try {
+      const result = await nativeGoogleSignIn(SCOPES.split(' '));
+      return result.accessToken;
+    } catch (error) {
+      lastAuthError = error instanceof Error ? error.message : 'Native Google sign-in failed.';
+      return null;
+    }
+  }
   const cached = loadCachedToken();
   if (cached) return cached.token;
-  lastAuthError = null;
-  if (isNativeApp()) {
-    lastAuthError =
-      'Two-way Google sign-in does not work inside the iPhone app yet. Google blocks OAuth inside embedded webviews; use the quick read-only iCal link on the iPhone, or add native Google sign-in for full two-way sync.';
-    return null;
-  }
   try {
     await loadGis();
   } catch {
