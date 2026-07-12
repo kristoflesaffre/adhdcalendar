@@ -31,6 +31,7 @@ export function GoogleConnectModal({ onClose }: Props) {
   const nativeApp = isNativeApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [authError, setAuthError] = useState('');
   const [okMsg, setOkMsg] = useState('');
   const [syncingId, setSyncingId] = useState('');
 
@@ -63,15 +64,16 @@ export function GoogleConnectModal({ onClose }: Props) {
   const signIn = async () => {
     const id = clientId.trim();
     if (!nativeApp && !id) {
-      setError('Finish step 5 first, then paste the Client ID in the box above the Sign in button.');
+      setAuthError('Finish step 5 first, then paste the Client ID in the box above the Sign in button.');
       return;
     }
     if (!nativeApp && !/\.apps\.googleusercontent\.com$/.test(id)) {
-      setError('That doesn’t look like a Client ID — it should end in .apps.googleusercontent.com (step 5).');
+      setAuthError('That doesn’t look like a Client ID — it should end in .apps.googleusercontent.com (step 5).');
       return;
     }
     setBusy(true);
     setError('');
+    setAuthError('');
     setOkMsg('');
     if (!nativeApp) dispatch({ type: 'settings/update', patch: { googleClientId: id } });
     try {
@@ -86,7 +88,7 @@ export function GoogleConnectModal({ onClose }: Props) {
       }
       setChosen(pre);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not connect to Google.');
+      setAuthError(e instanceof Error ? e.message : 'Could not connect to Google.');
     } finally {
       setBusy(false);
     }
@@ -246,6 +248,16 @@ export function GoogleConnectModal({ onClose }: Props) {
                 <GoogleG size={13} /> {busy && !gcals ? 'Connecting…' : nativeApp ? 'Sign in on iPhone' : 'Sign in'}
               </button>
             </div>
+            {busy && !gcals && nativeApp && (
+              <p className="settings-hint" role="status" style={{ margin: 0 }}>
+                Opening Google sign-in…
+              </p>
+            )}
+            {authError && (
+              <p className="error-text" role="alert" style={{ margin: 0 }}>
+                {authError}
+              </p>
+            )}
             {!nativeApp && (
               <>
                 <p className="settings-hint" style={{ margin: 0 }}>

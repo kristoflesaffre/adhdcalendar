@@ -279,5 +279,6 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 class AlarmViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(AlarmAudioPlugin())
+        bridge?.registerPluginInstance(GoogleAuthPlugin())
     }
 }
