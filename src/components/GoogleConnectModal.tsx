@@ -22,8 +22,13 @@ interface Props {
 
 const GOOGLE_SETTINGS_URL = 'https://calendar.google.com/calendar/u/0/r/settings';
 
+function isNativeApp(): boolean {
+  return !!(window as any).Capacitor?.isNativePlatform?.();
+}
+
 export function GoogleConnectModal({ onClose }: Props) {
   const { state, dispatch } = useStore();
+  const nativeApp = isNativeApp();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [okMsg, setOkMsg] = useState('');
@@ -216,8 +221,15 @@ export function GoogleConnectModal({ onClose }: Props) {
             </div>
             <p className="settings-hint">
               Sign in with Google and pick your calendars. Events flow both ways: what you add or change
-              here lands in Google Calendar (and on your phone), and the other way round.
+              here lands in Google Calendar, and the other way round. Each browser or installed iPhone app
+              has to be connected separately.
             </p>
+            {nativeApp && (
+              <p className="settings-hint">
+                On iPhone, this two-way sign-in needs a native Google login flow. The quick read-only link
+                below works in the iPhone app today; full two-way sync on iPhone needs that native login added.
+              </p>
+            )}
             {showWizard && <GoogleSetupWizard />}
             <div style={{ display: 'flex', gap: 8 }}>
               <input
@@ -274,7 +286,8 @@ export function GoogleConnectModal({ onClose }: Props) {
           <section className="connect-card">
             <div className="connect-card-head">Quick read-only link (1 minute)</div>
             <p className="settings-hint">
-              No setup: shows a Google calendar here, but changes made in this app stay in this app.
+              No setup: shows a Google calendar here, including in the iPhone app, but changes made in this
+              app stay in this app.
             </p>
             <ol className="connect-steps">
               <li>

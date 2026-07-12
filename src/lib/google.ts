@@ -63,6 +63,10 @@ export function getLastAuthError(): string | null {
   return lastAuthError;
 }
 
+function isNativeApp(): boolean {
+  return !!(window as any).Capacitor?.isNativePlatform?.();
+}
+
 /**
  * Get an access token. After the first consent this is usually silent
  * (no popup). Returns null when sign-in is needed but couldn't happen —
@@ -72,6 +76,11 @@ export async function getAccessToken(clientId: string): Promise<string | null> {
   const cached = loadCachedToken();
   if (cached) return cached.token;
   lastAuthError = null;
+  if (isNativeApp()) {
+    lastAuthError =
+      'Two-way Google sign-in does not work inside the iPhone app yet. Google blocks OAuth inside embedded webviews; use the quick read-only iCal link on the iPhone, or add native Google sign-in for full two-way sync.';
+    return null;
+  }
   try {
     await loadGis();
   } catch {

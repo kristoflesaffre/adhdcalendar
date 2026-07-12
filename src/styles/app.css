@@ -2817,7 +2817,7 @@ button.task-ring:active {
   position: fixed;
   inset: 0;
   background: rgba(15, 15, 18, 0.4);
-  z-index: 69;
+  z-index: 88;
   transition: opacity 200ms var(--ease-out);
 }
 
@@ -2832,6 +2832,7 @@ button.task-ring:active {
   right: 0;
   top: auto !important;
   bottom: 0;
+  z-index: 89;
   width: 100%;
   border-radius: 20px 20px 0 0;
   border: 0;
