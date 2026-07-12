@@ -2057,7 +2057,7 @@ textarea.input {
   position: fixed;
   right: 18px;
   left: auto;
-  bottom: max(calc(env(safe-area-inset-bottom) + 104px), 124px);
+  bottom: max(calc(env(safe-area-inset-bottom) + 82px), 104px);
   width: 56px;
   height: 56px;
   border-radius: 18px;
