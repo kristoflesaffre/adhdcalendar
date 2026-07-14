@@ -8,6 +8,7 @@ import {
   appStateFromRecords,
   hasCloudState,
   initializeCloudState,
+  mergeUnsyncedLocalState,
   queueCloudStateDiff,
 } from './instantSync';
 import type { SyncRecord } from './instantSync';
@@ -133,6 +134,14 @@ function load(): AppState {
     return raw ? normalizeState(JSON.parse(raw) as AppState) : seedState();
   } catch {
     return seedState();
+  }
+}
+
+function hasPersistedLocalState(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
   }
 }
 
@@ -320,6 +329,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       : null,
   );
+  const hadPersistedLocalStateRef = useRef(hasPersistedLocalState());
   const [state, setState] = useState<AppState>(load);
   const stateRef = useRef(state);
   const userIdRef = useRef('');
@@ -373,7 +383,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     if (pendingSyncRef.current > 0) return;
 
-    const next = normalizeState(appStateFromRecords(records, stateRef.current));
+    const cloudState = normalizeState(appStateFromRecords(records, stateRef.current));
+    const migrationOwner = localStorage.getItem(MIGRATION_OWNER_KEY);
+    if (hadPersistedLocalStateRef.current && migrationOwner === null) {
+      if (initializationError) return;
+      if (initializingRef.current) return;
+      initializingRef.current = true;
+      setInitializing(true);
+      const mergedState = normalizeState(mergeUnsyncedLocalState(cloudState, stateRef.current));
+      void initializeCloudState(mergedState, user.id)
+        .then(() => {
+          localStorage.setItem(MIGRATION_OWNER_KEY, user.id);
+          hadPersistedLocalStateRef.current = false;
+          stateRef.current = mergedState;
+          setState(mergedState);
+          setSyncStatus('synced');
+        })
+        .catch((error) => {
+          initializingRef.current = false;
+          setInitializing(false);
+          setSyncStatus('error');
+          const message = error instanceof Error ? error.message : 'Could not merge local calendar data.';
+          setSyncError(message);
+          setInitializationError(message);
+        });
+      return;
+    }
+
+    localStorage.setItem(MIGRATION_OWNER_KEY, user.id);
+    const next = cloudState;
     if (JSON.stringify(next) !== JSON.stringify(stateRef.current)) {
       stateRef.current = next;
       setState(next);

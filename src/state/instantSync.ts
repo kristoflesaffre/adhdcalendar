@@ -133,6 +133,87 @@ export function appStateFromRecords(records: SyncRecord[], fallback: AppState): 
   };
 }
 
+function calendarIdentity(calendar: AppState['calendars'][number]): string {
+  if (calendar.googleId) return `google:${calendar.googleId}`;
+  if (calendar.icsUrl) return `ics:${calendar.icsUrl}`;
+  return `local:${calendar.id}`;
+}
+
+/**
+ * Preserve data from an existing pre-sync installation when it first joins an
+ * account that already has cloud data. Cloud records win conflicts; local-only
+ * records are appended and calendar references are remapped when needed.
+ */
+export function mergeUnsyncedLocalState(cloud: AppState, local: AppState): AppState {
+  const calendars = [...cloud.calendars];
+  const cloudCalendarByIdentity = new Map(
+    cloud.calendars.map((calendar) => [calendarIdentity(calendar), calendar]),
+  );
+  const calendarIdMap = new Map<string, string>();
+
+  for (const calendar of local.calendars) {
+    const existing = cloudCalendarByIdentity.get(calendarIdentity(calendar));
+    if (existing) {
+      calendarIdMap.set(calendar.id, existing.id);
+      continue;
+    }
+    calendarIdMap.set(calendar.id, calendar.id);
+    calendars.push(calendar);
+    cloudCalendarByIdentity.set(calendarIdentity(calendar), calendar);
+  }
+
+  const remapCalendar = <T extends { calendarId: string }>(item: T): T => ({
+    ...item,
+    calendarId: calendarIdMap.get(item.calendarId) ?? item.calendarId,
+  });
+  const events = [...cloud.events];
+  const eventKeys = new Set(
+    cloud.events.map((event) =>
+      event.googleEventId
+        ? `google:${event.calendarId}:${event.googleEventId}`
+        : `local:${event.id}`,
+    ),
+  );
+  for (const sourceEvent of local.events) {
+    const event = remapCalendar(sourceEvent);
+    const key = event.googleEventId
+      ? `google:${event.calendarId}:${event.googleEventId}`
+      : `local:${event.id}`;
+    if (eventKeys.has(key)) continue;
+    events.push(event);
+    eventKeys.add(key);
+  }
+
+  const tasks = [...cloud.tasks];
+  const taskIds = new Set(cloud.tasks.map((task) => task.id));
+  for (const sourceTask of local.tasks) {
+    const task = remapCalendar(sourceTask);
+    if (taskIds.has(task.id)) continue;
+    tasks.push(task);
+    taskIds.add(task.id);
+  }
+
+  const appendUnique = <T extends { id: string }>(cloudItems: T[], localItems: T[]): T[] => {
+    const result = [...cloudItems];
+    const ids = new Set(cloudItems.map((item) => item.id));
+    for (const item of localItems) {
+      if (ids.has(item.id)) continue;
+      result.push(item);
+      ids.add(item.id);
+    }
+    return result;
+  };
+
+  return {
+    calendars,
+    events,
+    tasks,
+    alarmClocks: appendUnique(cloud.alarmClocks, local.alarmClocks),
+    timers: appendUnique(cloud.timers, local.timers),
+    settings: cloud.settings,
+  };
+}
+
 async function syncStateDiff(previous: AppState, next: AppState, ownerId: string): Promise<void> {
   const before = new Map(
     stateRecords(previous, ownerId).map((item) => [item.syncKey, item]),
