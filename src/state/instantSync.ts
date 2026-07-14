@@ -23,6 +23,7 @@ export interface SyncRecord {
 
 const META_ID = 'cloud-v1';
 const BATCH_SIZE = 100;
+const MAX_TRANSACTION_ATTEMPTS = 4;
 
 function cleanPayload<T>(payload: T): T {
   return JSON.parse(JSON.stringify(payload)) as T;
@@ -65,14 +66,36 @@ function payloadSignature(value: unknown): string {
   return JSON.stringify(cleanPayload(value));
 }
 
+function transactionMessage(error: unknown): string {
+  if (typeof error === 'object' && error && 'body' in error) {
+    const body = (error as { body?: { message?: string } }).body;
+    if (body?.message) return body.message;
+  }
+  return error instanceof Error ? error.message : '';
+}
+
+async function transactWithRetry(chunks: any[]): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
+    try {
+      await db.transact(chunks);
+      return;
+    } catch (error) {
+      const isDeadlock = transactionMessage(error).toLowerCase().includes('deadlock');
+      if (!isDeadlock || attempt === MAX_TRANSACTION_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 80 * attempt + Math.random() * 120));
+    }
+  }
+}
+
 async function transactBatches(chunks: any[]): Promise<void> {
   for (let index = 0; index < chunks.length; index += BATCH_SIZE) {
-    await db.transact(chunks.slice(index, index + BATCH_SIZE));
+    await transactWithRetry(chunks.slice(index, index + BATCH_SIZE));
   }
 }
 
 function upsertChunk(value: Omit<SyncRecord, 'id'>) {
-  return db.tx.syncRecords.lookup('syncKey', value.syncKey).update(value);
+  const { syncKey: key, ...attributes } = value;
+  return db.tx.syncRecords.lookup('syncKey', key).update(attributes);
 }
 
 export function hasCloudState(records: SyncRecord[]): boolean {
@@ -82,14 +105,14 @@ export function hasCloudState(records: SyncRecord[]): boolean {
 export async function initializeCloudState(state: AppState, ownerId: string): Promise<void> {
   const chunks = stateRecords(state, ownerId).map(upsertChunk);
   await transactBatches(chunks);
-  await db.transact(
+  await transactWithRetry([
     upsertChunk(
       record(ownerId, 'meta', META_ID, {
         version: 1,
         initializedAt: Date.now(),
       }),
     ),
-  );
+  ]);
 }
 
 export function appStateFromRecords(records: SyncRecord[], fallback: AppState): AppState {

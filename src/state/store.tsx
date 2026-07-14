@@ -344,10 +344,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user || cloud.isLoading || cloud.error || initializationError) return;
+    if (!user || cloud.isLoading || cloud.error) return;
     const records = (cloud.data?.syncRecords ?? []) as SyncRecord[];
 
     if (!hasCloudState(records)) {
+      if (initializationError) return;
       if (initializingRef.current) return;
       initializingRef.current = true;
       setInitializing(true);
