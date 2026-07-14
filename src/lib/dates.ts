@@ -114,6 +114,10 @@ export function fromLocalInputValue(v: string): number {
 /** Human label for an alarm offset in minutes */
 export function fmtOffset(minutes: number): string {
   if (minutes === 0) return 'At start';
+  if (minutes % 10080 === 0) {
+    const w = minutes / 10080;
+    return `${w} week${w > 1 ? 's' : ''}`;
+  }
   if (minutes % 1440 === 0) {
     const d = minutes / 1440;
     return `${d} day${d > 1 ? 's' : ''}`;

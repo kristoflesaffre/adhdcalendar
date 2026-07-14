@@ -27,10 +27,18 @@ interface PendingLike {
   base: { title: string; minutesBefore: number; location?: string };
 }
 
+export interface StandardNotificationLike {
+  key: string;
+  triggerAt: number;
+  title: string;
+  body: string;
+}
+
 // each notification plays the full 29s tolling bell; 30s gaps make the
 // chain ring near-continuously for ~7.5 minutes even when force-quit
 const CHAIN_LENGTH = 15;
 const CHAIN_GAP_MS = 30_000;
+const FALLBACK_DELAY_MS = 25_000;
 const TEST_ALARM_ID = 999_000_001;
 
 function isNative(): boolean {
@@ -47,7 +55,20 @@ function numericId(key: string, i: number): number {
   return (Math.abs(h) % 100_000_000) * 10 + i;
 }
 
-export async function syncNativeAlarms(pending: PendingLike[], soundId?: string): Promise<void> {
+function notificationId(key: string): number {
+  let h = 2166136261;
+  for (let c = 0; c < key.length; c++) {
+    h ^= key.charCodeAt(c);
+    h = Math.imul(h, 16777619);
+  }
+  return 1_100_000_000 + (Math.abs(h) % 900_000_000);
+}
+
+export async function syncNativeAlarms(
+  pending: PendingLike[],
+  soundId?: string,
+  standardNotifications: StandardNotificationLike[] = [],
+): Promise<void> {
   if (!isNative()) return;
   try {
     const { LocalNotifications } = await import('@capacitor/local-notifications');
@@ -65,7 +86,9 @@ export async function syncNativeAlarms(pending: PendingLike[], soundId?: string)
     }
 
     const sound = alarmSoundFileName(soundId);
-    const notifications = pending.flatMap((p) =>
+    // iOS keeps at most 64 pending local notifications. Reserve 45 slots
+    // for the next three persistent alarm chains and the rest for reminders.
+    const alarmNotifications = pending.slice(0, 3).flatMap((p) =>
       Array.from({ length: CHAIN_LENGTH }, (_, i) => ({
         id: numericId(p.key, i),
         title: `🔔 ${p.base.title}`,
@@ -75,13 +98,28 @@ export async function syncNativeAlarms(pending: PendingLike[], soundId?: string)
             : `Starts in ${p.base.minutesBefore} min`) +
           (p.base.location ? ` · ${p.base.location}` : '') +
           (i > 0 ? '  (still ringing — open to dismiss)' : ''),
-        // start 5s after the trigger: if the app is alive, the native loop
-        // rings at T and cancels this pending chain before it can overlap
-        schedule: { at: new Date(p.triggerAt + 5000 + i * CHAIN_GAP_MS), allowWhileIdle: true },
+        // The notification chain is only a last-resort fallback for a
+        // force-quit/killed app. Give the native iPhone audio loop first
+        // priority; otherwise iOS may route this notification to Apple Watch
+        // as a small ping before the real phone alarm gets heard.
+        schedule: { at: new Date(p.triggerAt + FALLBACK_DELAY_MS + i * CHAIN_GAP_MS), allowWhileIdle: true },
         sound,
         threadIdentifier: p.key,
+        extra: { carillonKind: 'alarm' },
       })),
     );
+
+    const reminderNotifications = standardNotifications.slice(0, 18).map((notification) => ({
+      id: notificationId(notification.key),
+      title: notification.title,
+      body: notification.body,
+      schedule: { at: new Date(notification.triggerAt), allowWhileIdle: true },
+      sound: 'notification.wav',
+      threadIdentifier: notification.key,
+      extra: { carillonKind: 'notification' },
+    }));
+
+    const notifications = [...reminderNotifications, ...alarmNotifications];
 
     if (notifications.length) {
       await LocalNotifications.schedule({ notifications });
@@ -149,9 +187,9 @@ export async function scheduleTestAlarm(afterSeconds: number, soundId?: string):
         id: TEST_ALARM_ID,
         title: '🔔 Test alarm',
         body: `Scheduled ${afterSeconds}s ago — if you can hear this, alarms work.`,
-        // 5s after the native ring, mirroring the real chain: if the app is
-        // alive, the ring fires first and cancels this before it can overlap
-        schedule: { at: new Date(Date.now() + afterSeconds * 1000 + 5000) },
+        // Same fallback delay as real alarms: the native iPhone ring should
+        // happen first; this notification only proves the fallback path.
+        schedule: { at: new Date(Date.now() + afterSeconds * 1000 + FALLBACK_DELAY_MS) },
         sound: alarmSoundFileName(soundId),
       },
     ],

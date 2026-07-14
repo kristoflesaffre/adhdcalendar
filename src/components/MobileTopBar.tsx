@@ -2,38 +2,40 @@ import { useEffect, useRef, useState } from 'react';
 import type { Occurrence, ViewMode } from '../types';
 import { useStore } from '../state/store';
 import { useEventSearch } from '../hooks/useEventSearch';
-import { addDays, fmtDay, fmtMonth, fmtTime, startOfWeek } from '../lib/dates';
-import { Close, Menu, SearchIcon } from './icons';
+import { fmtDay, fmtTime } from '../lib/dates';
+import { MiniMonth } from './MiniMonth';
+import { ChevronDown, Close, Menu, SearchIcon } from './icons';
 
 interface Props {
   view: ViewMode;
   date: Date;
+  busyDays: Set<string>;
   onOpenDrawer: () => void;
+  onSelectDate: (d: Date) => void;
   onOpenOccurrence: (occ: Occurrence) => void;
   onJumpToday: () => void;
 }
 
-function titleFor(view: ViewMode, date: Date, weekStartsOn: 0 | 1): string {
-  if (view === 'day') {
-    return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  }
-  if (view === '3day') {
-    const end = addDays(date, 2);
-    if (date.getMonth() === end.getMonth()) return fmtMonth(date);
-    return `${date.toLocaleDateString('en-GB', { month: 'short' })} – ${end.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`;
-  }
-  if (view === 'week') {
-    const ws = startOfWeek(date, weekStartsOn);
-    const we = addDays(ws, 6);
-    if (ws.getMonth() === we.getMonth()) return fmtMonth(ws);
-    return `${ws.toLocaleDateString('en-GB', { month: 'short' })} – ${we.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`;
-  }
-  return fmtMonth(date);
+/** Google iOS shows just the month; the year only when it isn't this year */
+function monthTitle(date: Date): string {
+  const month = date.toLocaleDateString('en-GB', { month: 'long' });
+  return date.getFullYear() === new Date().getFullYear()
+    ? month
+    : `${month} ${date.getFullYear()}`;
 }
 
-export function MobileTopBar({ view, date, onOpenDrawer, onOpenOccurrence, onJumpToday }: Props) {
+export function MobileTopBar({
+  view: _view,
+  date,
+  busyDays,
+  onOpenDrawer,
+  onSelectDate,
+  onOpenOccurrence,
+  onJumpToday,
+}: Props) {
   const { state } = useStore();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [monthOpen, setMonthOpen] = useState(false);
   const [query, setQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const hits = useEventSearch(state.events, query);
@@ -93,21 +95,50 @@ export function MobileTopBar({ view, date, onOpenDrawer, onOpenOccurrence, onJum
   }
 
   return (
-    <header className="mobile-topbar">
-      <button className="icon-btn" aria-label="Open menu" onClick={onOpenDrawer}>
-        <Menu size={20} />
-      </button>
+    <div className="month-drop-wrap">
+      <header className="mobile-topbar">
+        <button className="icon-btn" aria-label="Open menu" onClick={onOpenDrawer}>
+          <Menu size={20} />
+        </button>
 
-      <span className="mobile-title-plain">{titleFor(view, date, state.settings.weekStartsOn)}</span>
+        {/* Google iOS: "July ⌄" pulls down a month grid */}
+        <button
+          className="mobile-title-btn"
+          aria-expanded={monthOpen}
+          onClick={() => setMonthOpen((o) => !o)}
+        >
+          {monthTitle(date)}
+          <span className="chev" style={{ display: 'inline-flex' }}>
+            <ChevronDown size={16} />
+          </span>
+        </button>
 
-      <span className="topbar-spacer" />
+        <span className="topbar-spacer" />
 
-      <button className="icon-btn" aria-label="Search" onClick={() => setSearchOpen(true)}>
-        <SearchIcon size={19} />
-      </button>
-      <button className="icon-btn today-glyph" aria-label="Jump to today" onClick={onJumpToday}>
-        <span className="today-glyph-num">{today}</span>
-      </button>
-    </header>
+        <button className="icon-btn" aria-label="Search" onClick={() => setSearchOpen(true)}>
+          <SearchIcon size={19} />
+        </button>
+        <button className="icon-btn today-glyph" aria-label="Jump to today" onClick={onJumpToday}>
+          <span className="today-glyph-num">{today}</span>
+        </button>
+      </header>
+
+      {monthOpen && (
+        <>
+          <div className="month-drop-scrim" onPointerDown={() => setMonthOpen(false)} />
+          <div className="month-drop">
+            <MiniMonth
+              selected={date}
+              onSelect={(d) => {
+                setMonthOpen(false);
+                onSelectDate(d);
+              }}
+              weekStartsOn={state.settings.weekStartsOn}
+              busyDays={busyDays}
+            />
+          </div>
+        </>
+      )}
+    </div>
   );
 }

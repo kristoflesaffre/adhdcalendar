@@ -103,7 +103,11 @@ export interface IcsParseResult {
   events: Omit<EventItem, 'calendarId'>[];
 }
 
-export function parseIcs(text: string, defaultAlarms: number[]): IcsParseResult {
+export function parseIcs(
+  text: string,
+  defaultAlarms: number[],
+  defaultNotifications: number[],
+): IcsParseResult {
   const lines = unfoldLines(text);
   const events: Omit<EventItem, 'calendarId'>[] = [];
   let calendarName: string | null = null;
@@ -128,7 +132,7 @@ export function parseIcs(text: string, defaultAlarms: number[]): IcsParseResult 
     }
     if (/^END:VEVENT/i.test(line)) {
       if (cur) {
-        const ev = buildEvent(cur, alarmTriggers, defaultAlarms);
+        const ev = buildEvent(cur, alarmTriggers, defaultAlarms, defaultNotifications);
         if (ev) events.push(ev);
       }
       cur = null;
@@ -161,6 +165,7 @@ function buildEvent(
   props: Record<string, RawProp[]>,
   alarmTriggers: number[],
   defaultAlarms: number[],
+  defaultNotifications: number[],
 ): Omit<EventItem, 'calendarId'> | null {
   const get = (n: string) => props[n]?.[0];
   const dtstart = get('DTSTART');
@@ -205,6 +210,7 @@ function buildEvent(
     allDay: start.allDay,
     recurrence: rrule,
     exceptions: exceptions.length ? exceptions : undefined,
-    alarms: uniqueAlarms.length ? uniqueAlarms : [...defaultAlarms],
+    notifications: uniqueAlarms.length ? uniqueAlarms : [...defaultNotifications],
+    alarms: [...defaultAlarms],
   };
 }

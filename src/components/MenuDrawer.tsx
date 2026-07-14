@@ -43,7 +43,11 @@ export function MenuDrawer({ open, view, onClose, onView, onEditCalendar, onOpen
 
   const importIcs = async (file: File) => {
     const text = await file.text();
-    const parsed = parseIcs(text, state.settings.defaultAlarms);
+    const parsed = parseIcs(
+      text,
+      state.settings.defaultAlarms,
+      state.settings.defaultNotifications,
+    );
     const calId = `ics-${uid()}`;
     const usedColors = new Set(state.calendars.map((c) => c.color));
     const color =
@@ -111,15 +115,14 @@ export function MenuDrawer({ open, view, onClose, onView, onEditCalendar, onOpen
                 </span>
               )}
               <button
-                className="icon-btn menu-cal-edit"
-                style={{ width: 32, height: 32 }}
+                className="cal-edit-btn"
                 aria-label={`Edit ${cal.name}`}
                 onClick={() => {
                   onClose();
                   onEditCalendar(cal);
                 }}
               >
-                <Pencil size={9} />
+                <Pencil size={12} />
               </button>
             </li>
           ))}

@@ -1,7 +1,19 @@
 import { Fragment, useEffect, useMemo, useRef } from 'react';
 import type { CalendarInfo, Occurrence, TaskOccurrence } from '../types';
-import { MS_DAY, fmtTime, fmtWeekdayShort, isToday, startOfDay } from '../lib/dates';
-import { BellFilled } from './icons';
+import { MS_DAY, addDays, fmtTime, fmtWeekdayShort, isToday, startOfDay, startOfWeek } from '../lib/dates';
+import { RingingBell } from './icons';
+
+/** Google iOS-style week separator: "JULY 13 – 19" or "JUL 28 – AUG 3" */
+function weekLabel(weekStart: Date): string {
+  const end = addDays(weekStart, 6);
+  const m1 = weekStart.toLocaleDateString('en-GB', { month: 'long' });
+  if (weekStart.getMonth() === end.getMonth()) {
+    return `${m1} ${weekStart.getDate()} – ${end.getDate()}`;
+  }
+  const s1 = weekStart.toLocaleDateString('en-GB', { month: 'short' });
+  const s2 = end.toLocaleDateString('en-GB', { month: 'short' });
+  return `${s1} ${weekStart.getDate()} – ${s2} ${end.getDate()}`;
+}
 
 interface Props {
   occurrences: Occurrence[];
@@ -10,6 +22,7 @@ interface Props {
   onEventClick: (occ: Occurrence, anchor: DOMRect) => void;
   onToggleTask: (occ: TaskOccurrence) => void;
   onTaskClick: (occ: TaskOccurrence) => void;
+  weekStartsOn: 0 | 1;
   /** bump this to scroll back to today (e.g. tapping the "today" glyph) */
   jumpSignal: number;
 }
@@ -33,10 +46,13 @@ export function AgendaView({
   onEventClick,
   onToggleTask,
   onTaskClick,
+  weekStartsOn,
   jumpSignal,
 }: Props) {
   const calById = useMemo(() => new Map(calendars.map((c) => [c.id, c])), [calendars]);
-  const todayRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const todayAnchorRef = useRef<HTMLDivElement>(null);
+  const didInitialScrollRef = useRef(false);
 
   const groups = useMemo<DayGroup[]>(() => {
     const map = new Map<number, Occurrence[]>();
@@ -70,7 +86,22 @@ export function AgendaView({
   }, [occurrences, tasks]);
 
   useEffect(() => {
-    todayRef.current?.scrollIntoView({ block: 'start' });
+    const scroller = scrollRef.current;
+    const anchor = todayAnchorRef.current;
+    if (!scroller || !anchor) return;
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior =
+      didInitialScrollRef.current && !prefersReducedMotion ? 'smooth' : 'auto';
+    const scrollerRect = scroller.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    const top = scroller.scrollTop + anchorRect.top - scrollerRect.top;
+
+    didInitialScrollRef.current = true;
+    scroller.scrollTo({
+      top: Math.max(top, 0),
+      behavior,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpSignal]);
 
@@ -83,12 +114,19 @@ export function AgendaView({
   }
 
   return (
-    <div className="agenda-scroll">
-      {groups.map(({ day, items, taskItems }) => {
+    <div className="agenda-scroll" ref={scrollRef}>
+      {groups.map(({ day, items, taskItems }, gi) => {
         const today = isToday(day);
+        // Google iOS labels each new week between the day groups — empty
+        // days are skipped, so compare weeks rather than checking Mondays
+        const week = startOfWeek(day, weekStartsOn);
+        const showWeekLabel =
+          gi > 0 && week.getTime() !== startOfWeek(groups[gi - 1].day, weekStartsOn).getTime();
         return (
           <Fragment key={day.getTime()}>
-            <div className={`agenda-day${today ? ' is-today' : ''}`} ref={today ? todayRef : undefined}>
+            {showWeekLabel && <div className="agenda-week-label">{weekLabel(week)}</div>}
+            {today && <div className="agenda-today-anchor" ref={todayAnchorRef} aria-hidden="true" />}
+            <div className={`agenda-day${today ? ' is-today' : ''}`}>
               <div className="agenda-daylabel">
                 <span className="agenda-dow">{fmtWeekdayShort(day).toUpperCase()}</span>
                 <span className="agenda-datenum">{day.getDate()}</span>
@@ -125,7 +163,7 @@ export function AgendaView({
                     >
                       <span className="agenda-card-title">
                         <span className="agenda-card-title-text">{occ.event.title || '(untitled)'}</span>
-                        {occ.event.alarms.length > 0 && !occ.event.allDay && <BellFilled size={11} />}
+                        {occ.event.alarms.length > 0 && !occ.event.allDay && <RingingBell size={11} />}
                         {isMultiDay && totalDays > 1 && (
                           <span className="agenda-daycount">
                             Day {dayIndex}/{totalDays}
@@ -157,7 +195,7 @@ export function AgendaView({
                           {occ.task.hasTime && <span className="task-time">{fmtTime(occ.due)}</span>}
                           {occ.task.recurrence && <span aria-label="repeats">↻</span>}
                           {occ.task.alarms.length > 0 && occ.task.hasTime && (
-                            <BellFilled size={10} />
+                            <RingingBell size={10} />
                           )}
                           <span className="task-list-name" style={{ color }}>
                             {cal?.name}

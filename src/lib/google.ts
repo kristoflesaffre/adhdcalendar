@@ -218,6 +218,7 @@ export async function fetchGoogleEvents(
   googleCalendarId: string,
   localCalendarId: string,
   defaultAlarms: number[],
+  defaultNotifications: number[],
 ): Promise<EventItem[]> {
   const timeMin = new Date(Date.now() - 92 * MS_DAY).toISOString();
   const timeMax = new Date(Date.now() + 548 * MS_DAY).toISOString();
@@ -233,7 +234,7 @@ export async function fetchGoogleEvents(
     const data = await gFetch(token, url);
     for (const item of data.items ?? []) {
       if (item.status === 'cancelled') continue;
-      const ev = mapGoogleEvent(item, localCalendarId, defaultAlarms);
+      const ev = mapGoogleEvent(item, localCalendarId, defaultAlarms, defaultNotifications);
       if (ev) events.push(ev);
     }
     pageToken = data.nextPageToken ?? '';
@@ -242,7 +243,12 @@ export async function fetchGoogleEvents(
   return events;
 }
 
-function mapGoogleEvent(item: any, calendarId: string, defaultAlarms: number[]): EventItem | null {
+function mapGoogleEvent(
+  item: any,
+  calendarId: string,
+  defaultAlarms: number[],
+  defaultNotifications: number[],
+): EventItem | null {
   const startRaw = item.start ?? {};
   const endRaw = item.end ?? {};
   let start: number;
@@ -260,16 +266,16 @@ function mapGoogleEvent(item: any, calendarId: string, defaultAlarms: number[]):
     return null;
   }
 
-  // carry over Google reminders as real alarms
-  let alarms: number[] = [];
+  // Google reminders remain standard notifications; Carillon alarms are separate.
+  let notifications: number[] = [];
   if (item.reminders?.overrides?.length) {
-    alarms = item.reminders.overrides
+    notifications = item.reminders.overrides
       .map((o: any) => Number(o.minutes))
       .filter((m: number) => Number.isFinite(m) && m >= 0);
   } else if (item.reminders?.useDefault) {
-    alarms = [...defaultAlarms];
+    notifications = [...defaultNotifications];
   }
-  alarms = [...new Set(alarms)].sort((a, b) => b - a);
+  notifications = [...new Set(notifications)].sort((a, b) => b - a);
 
   return {
     id: uid(),
@@ -280,7 +286,8 @@ function mapGoogleEvent(item: any, calendarId: string, defaultAlarms: number[]):
     start,
     end,
     allDay,
-    alarms,
+    notifications,
+    alarms: [...defaultAlarms],
     // singleEvents=true expands recurring series; instances share the series
     // via recurringEventId — keep the instance id so edits patch precisely
     googleEventId: item.id,
@@ -347,7 +354,7 @@ function toRRule(r: Recurrence): string {
   return rule;
 }
 
-/** Local event → Google event resource (title, times, recurrence, alarms) */
+/** Local event → Google event resource (title, times, recurrence, notifications) */
 export function toGoogleResource(ev: EventItem): any {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const resource: any = {
@@ -358,7 +365,7 @@ export function toGoogleResource(ev: EventItem): any {
     end: ev.allDay ? { date: toDateStr(ev.end) } : { dateTime: toRfc3339Local(ev.end), timeZone: tz },
     reminders: {
       useDefault: false,
-      overrides: [...ev.alarms]
+      overrides: [...(ev.notifications ?? [])]
         .sort((a, b) => a - b)
         .slice(0, 5)
         .map((m) => ({ method: 'popup', minutes: m })),

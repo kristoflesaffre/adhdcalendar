@@ -3,7 +3,7 @@ import type { CalendarInfo, Occurrence } from '../types';
 import { fmtFullDay, fmtOffset, fmtTimeRange } from '../lib/dates';
 import { describeRecurrence } from '../lib/recurrence';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { BellFilled, Close, Notes, Pencil, Pin, Repeat, Trash } from './icons';
+import { Bell, CalIcon, Close, Notes, Pencil, Pin, RingingBell, Trash } from './icons';
 
 interface Props {
   occ: Occurrence;
@@ -21,6 +21,11 @@ export function EventPopover({ occ, anchor, calendar, onClose, onEdit, onDelete 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { event } = occ;
   const readOnly = calendar?.readOnly;
+  const notifications = [...(event.notifications ?? [])].sort((a, b) => b - a);
+  const alarms = [...(event.alarms ?? [])].sort((a, b) => b - a);
+  const whenText = event.allDay
+    ? `${fmtFullDay(occ.start)} · All day`
+    : `${fmtFullDay(occ.start)} · ${fmtTimeRange(occ.start, occ.end)}`;
 
   useLayoutEffect(() => {
     if (isMobile) return; // the sheet is positioned purely by CSS
@@ -69,12 +74,9 @@ export function EventPopover({ occ, anchor, calendar, onClose, onEdit, onDelete 
   );
   const deleteBtn = !readOnly && (
     <button
-      className="icon-btn"
+      className="icon-btn pop-delete-btn"
       aria-label="Delete"
-      onClick={() => {
-        if (event.recurrence) setConfirmDelete(true);
-        else onDelete('series');
-      }}
+      onClick={() => setConfirmDelete(true)}
     >
       <Trash size={isMobile ? 17 : 14} />
     </button>
@@ -111,77 +113,106 @@ export function EventPopover({ occ, anchor, calendar, onClose, onEdit, onDelete 
           </div>
         )}
 
-      <div className="pop-row" style={{ padding: 0 }}>
-        <span className="dot pop-cal-dot" style={{ background: color }} />
-        <div style={{ minWidth: 0 }}>
-          <h2>{event.title || '(untitled)'}</h2>
-          <p className="pop-when">
-            {fmtFullDay(occ.start)}
-            {!event.allDay && <> · {fmtTimeRange(occ.start, occ.end)}</>}
-            {event.allDay && <> · all day</>}
-          </p>
+        <div className="pop-title-block">
+          <span className="pop-color-swatch" style={{ background: color }} />
+          <div className="pop-title-copy">
+            <h2>{event.title || '(untitled)'}</h2>
+            <p className="pop-when">{whenText}</p>
+            {event.recurrence && <p className="pop-repeat">{describeRecurrence(event.recurrence)}</p>}
+          </div>
         </div>
-      </div>
 
-      {confirmDelete ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-2)' }}>
-            This is a repeating event.
-          </p>
-          <button className="btn btn-ghost" onClick={() => onDelete('occurrence')}>
-            Delete this event only
-          </button>
-          <button className="btn btn-danger" style={{ border: '1px solid var(--hairline)' }} onClick={() => onDelete('series')}>
-            Delete the whole series
-          </button>
-        </div>
-      ) : (
-        <>
-          {event.recurrence && (
-            <div className="pop-row">
-              <Repeat size={14} />
-              {describeRecurrence(event.recurrence)}
+        {confirmDelete ? (
+          <div className="pop-delete-confirm" role="alertdialog" aria-label="Delete event confirmation">
+            <strong>{event.recurrence ? 'Delete repeating event?' : 'Delete event?'}</strong>
+            <p>
+              {event.recurrence
+                ? 'Choose whether to delete only this event or the whole series.'
+                : 'Are you sure you want to delete this event?'}
+            </p>
+            <div className="pop-delete-actions">
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </button>
+              {event.recurrence ? (
+                <>
+                  <button className="btn btn-ghost" onClick={() => onDelete('occurrence')}>
+                    This event only
+                  </button>
+                  <button className="btn btn-danger" onClick={() => onDelete('series')}>
+                    Whole series
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn-danger" onClick={() => onDelete('series')}>
+                  Delete
+                </button>
+              )}
             </div>
-          )}
-          {event.location && (
-            <div className="pop-row">
-              <Pin size={14} />
-              {event.location}
+          </div>
+        ) : (
+          <div className="pop-detail-list">
+            {event.location && (
+              <div className="pop-detail-row">
+                <Pin size={18} />
+                <div className="pop-detail-main">
+                  <span>{event.location}</span>
+                </div>
+              </div>
+            )}
+
+            {event.description && (
+              <div className="pop-detail-row">
+                <Notes size={18} />
+                <div className="pop-detail-main pop-description">
+                  <span>{event.description}</span>
+                </div>
+              </div>
+            )}
+
+            {notifications.length > 0 && (
+              <div className="pop-detail-row">
+                <Bell size={18} />
+                <div className="pop-detail-main">
+                  <span>Notification</span>
+                  <div className="pop-pill-row">
+                    {notifications.map((m) => (
+                      <span key={m} className="pop-pill">
+                        {fmtOffset(m)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="pop-detail-row">
+              <RingingBell size={18} />
+              <div className="pop-detail-main">
+                <span>Alarm</span>
+                {alarms.length ? (
+                  <div className="pop-pill-row">
+                    {alarms.map((m) => (
+                      <span key={m} className="pop-pill pop-pill-alarm">
+                        {fmtOffset(m)}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <small>No alarm</small>
+                )}
+              </div>
             </div>
-          )}
-          {event.description && (
-            <div className="pop-row">
-              <Notes size={14} />
-              <span style={{ whiteSpace: 'pre-wrap' }}>{event.description}</span>
-            </div>
-          )}
-          <div className="pop-row">
-            <span style={{ color: 'var(--muted)', marginTop: 1 }}>
-              <BellFilled size={13} />
-            </span>
-            {event.alarms.length ? (
-              <span className="pop-alarms">
-                {[...event.alarms]
-                  .sort((a, b) => b - a)
-                  .map((m) => (
-                    <span key={m} className="pop-alarm-tag">
-                      <BellFilled size={9} />
-                      {fmtOffset(m)}
-                    </span>
-                  ))}
-              </span>
-            ) : (
-              <span style={{ color: 'var(--muted)' }}>No alarms</span>
+
+            {calendar && (
+              <div className="pop-detail-row">
+                <CalIcon size={18} />
+                <div className="pop-detail-main">
+                  <span>{calendar.name}</span>
+                  {readOnly && <small>Read-only calendar</small>}
+                </div>
+              </div>
             )}
           </div>
-          {calendar && (
-            <div className="pop-row" style={{ color: 'var(--muted)', fontSize: 12 }}>
-              <span className="dot" style={{ background: calendar.color, marginTop: 4 }} />
-              {calendar.name}
-              {readOnly ? ' · read-only' : ''}
-            </div>
-          )}
-        </>
         )}
       </div>
     </>

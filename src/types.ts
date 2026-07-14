@@ -45,6 +45,8 @@ export interface EventItem {
   recurrence?: Recurrence;
   /** occurrence start times (ms) removed from the series */
   exceptions?: number[];
+  /** minutes before start; standard push notifications with a short sound */
+  notifications: number[];
   /** minutes before start; the signature feature — real alarms */
   alarms: number[];
   /** per-event color override */
@@ -77,8 +79,12 @@ export interface TaskItem {
   exceptions?: number[];
   /** occurrence due-times that are checked off */
   completedOn?: number[];
+  /** minutes before due; standard push notifications with a short sound */
+  notifications: number[];
   /** minutes before due — the same ringing alarms as events (needs hasTime) */
   alarms: number[];
+  /** compressed local screenshot attached to the task */
+  screenshot?: string;
 }
 
 export interface TaskOccurrence {
@@ -115,25 +121,55 @@ export interface Settings {
   theme: ThemePref;
   googleClientId: string;
   alarmSound: AlarmSoundId;
+  /** default notification offsets (minutes) applied to new events */
+  defaultNotifications: number[];
   /** default alarm offsets (minutes) applied to new events when enabled */
   defaultAlarms: number[];
   weekStartsOn: 0 | 1;
+}
+
+/** An iOS-style clock alarm: rings at a wall-clock time, optionally repeating */
+export interface AlarmClockItem {
+  id: string;
+  hour: number;
+  minute: number;
+  label: string;
+  /** 0 = Sunday … 6 = Saturday; empty = one-time (next occurrence) */
+  repeatDays: number[];
+  enabled: boolean;
+  /** first occurrence moment (ms) — the recurrence anchor */
+  anchor: number;
+}
+
+/** A running countdown timer (multiple can run at once) */
+export interface ActiveTimer {
+  id: string;
+  label: string;
+  totalMs: number;
+  startedAt: number;
+  endAt: number;
+  /** remaining ms frozen while paused (endAt is recomputed on resume) */
+  pausedRemaining?: number;
+  /** the cube-face hue this timer was started from (color = duration) */
+  hue?: number;
 }
 
 export interface AppState {
   calendars: CalendarInfo[];
   events: EventItem[];
   tasks: TaskItem[];
+  alarmClocks: AlarmClockItem[];
+  timers: ActiveTimer[];
   settings: Settings;
 }
 
 export const EVENT_PALETTE: { name: string; value: string }[] = [
-  { name: 'Verdigris', value: '#206657' },
-  { name: 'Cobalt', value: '#3a5bc7' },
-  { name: 'Plum', value: '#7d4a9e' },
-  { name: 'Rust', value: '#b3502d' },
-  { name: 'Ochre', value: '#9a7514' },
-  { name: 'Slate', value: '#5b6472' },
-  { name: 'Rose', value: '#b8447a' },
-  { name: 'Moss', value: '#5f7f3a' },
+  { name: 'Mint', value: '#2f8f6f' },
+  { name: 'Teal', value: '#167c83' },
+  { name: 'Azure', value: '#2f64c8' },
+  { name: 'Indigo', value: '#5d55b8' },
+  { name: 'Violet', value: '#7a4aa2' },
+  { name: 'Coral', value: '#b85a3a' },
+  { name: 'Amber', value: '#9f7a16' },
+  { name: 'Moss', value: '#5d7f36' },
 ];

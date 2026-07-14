@@ -11,7 +11,7 @@ import {
   setMinutesOfDay,
   startOfDay,
 } from '../lib/dates';
-import { BellFilled } from './icons';
+import { RingingBell } from './icons';
 
 const SNAP = 15; // minutes — fine-tuning moves/resizes
 const CREATE_SNAP = 30; // selecting a new slot always lands on :00 or :30
@@ -96,6 +96,7 @@ export function TimeGrid({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const colsRef = useRef<HTMLDivElement>(null);
+  const suppressEventClickRef = useRef(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const calById = useMemo(() => new Map(calendars.map((c) => [c.id, c])), [calendars]);
@@ -235,6 +236,10 @@ export function TimeGrid({
         );
       }
     } else if (drag.moved) {
+      suppressEventClickRef.current = true;
+      window.setTimeout(() => {
+        suppressEventClickRef.current = false;
+      }, 0);
       const day = days[drag.kind === 'move' ? drag.dayIdx : drag.origDayIdx];
       const newStart =
         drag.kind === 'move'
@@ -245,9 +250,6 @@ export function TimeGrid({
           ? newStart + (drag.occ.end - drag.occ.start)
           : setMinutesOfDay(day, drag.endMin).getTime();
       onMoveOccurrence(drag.occ, newStart, newEnd);
-    } else {
-      // no movement → treat as click
-      onEventClick(drag.occ, (e.target as HTMLElement).closest('.tg-event')!.getBoundingClientRect());
     }
     setDrag(null);
   };
@@ -359,16 +361,17 @@ export function TimeGrid({
                     const ds = day.getTime();
                     const startMin = Math.max(0, (occ.start - ds) / MS_MIN);
                     const endMin = Math.min(24 * 60, (occ.end - ds) / MS_MIN);
+                    const durationMin = endMin - startMin;
                     const isDragTarget =
                       drag && drag.kind !== 'create' && drag.occ.key === occ.key;
                     const cal = calById.get(occ.event.calendarId);
                     const color = occ.event.color ?? cal?.color ?? 'var(--accent)';
                     const widthPct = 100 / cols;
                     return (
-                      <div
-                        key={occ.key}
-                        className={`tg-event${isDragTarget && drag.moved ? ' is-dragging' : ''}${occ.end < now ? ' is-past' : ''}`}
-                        style={{
+	                      <div
+	                        key={occ.key}
+	                        className={`tg-event${durationMin <= 20 ? ' is-tiny' : durationMin <= 30 ? ' is-short' : ''}${isDragTarget && drag.moved ? ' is-dragging' : ''}${occ.end < now ? ' is-past' : ''}`}
+	                        style={{
                           top: (startMin / 60) * HOUR_H,
                           height: Math.max(((endMin - startMin) / 60) * HOUR_H - 2, 14),
                           left: `calc(${col * widthPct}% + 2px)`,
@@ -376,14 +379,18 @@ export function TimeGrid({
                           ['--ev' as any]: color,
                         }}
                         onPointerDown={(e) => onEventPointerDown(e, occ, dayIdx, false)}
+                        onClick={(e) => {
+                          if (suppressEventClickRef.current) return;
+                          onEventClick(occ, (e.currentTarget as HTMLElement).getBoundingClientRect());
+                        }}
                       >
                         <div className="tg-ev-title">
+                          <span className="tg-ev-title-text">{occ.event.title || '(untitled)'}</span>
                           {occ.event.alarms.length > 0 && (
-                            <span className="bell-mini" style={{ color }}>
-                              <BellFilled size={10} />
+                            <span className="bell-mini">
+                              <RingingBell size={10} />
                             </span>
                           )}
-                          <span>{occ.event.title || '(untitled)'}</span>
                         </div>
                         <div className="tg-ev-time">
                           {fmtTime(occ.start)} – {fmtTime(occ.end)}

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AppState, Occurrence, RingingAlarm, Snooze } from '../types';
-import { MS_DAY, MS_MIN } from '../lib/dates';
+import { MS_DAY, MS_MIN, fmtOffset } from '../lib/dates';
 import { expandEvents, expandTasks } from '../lib/recurrence';
 import { syncNativeAlarms } from '../native/alarms';
+import type { StandardNotificationLike } from '../native/alarms';
 import { armNativeRing, ringNativeAlarm, startBackgroundKeepAlive } from '../native/alarmAudio';
 
 const FIRED_KEY = 'carillon.fired.v1';
@@ -11,6 +12,7 @@ const TICK_MS = 5_000;
 /** an alarm still fires if we were away, up to this long after its moment */
 const LATE_WINDOW = 15 * MS_MIN;
 const LOOKAHEAD = 2 * MS_DAY;
+const NOTIFICATION_LOOKAHEAD = 67 * MS_DAY;
 
 function loadJson<T>(key: string, fallback: T): T {
   try {
@@ -92,6 +94,25 @@ function computePending(state: AppState, now: number): PendingAlarm[] {
     }
   }
 
+  // running countdown timers ring exactly like alarms (paused ones don't)
+  for (const timer of state.timers ?? []) {
+    if (timer.pausedRemaining != null) continue;
+    const key = `timer:${timer.id}@${timer.endAt}`;
+    out.push({
+      key,
+      triggerAt: timer.endAt,
+      base: {
+        key,
+        eventId: timer.id,
+        title: `⏱ ${timer.label}`,
+        calendarName: 'Timer',
+        color: '#e07b39',
+        occStart: timer.endAt,
+        minutesBefore: 0,
+      },
+    });
+  }
+
   // active snoozes join the queue
   for (const sn of loadJson<Snooze[]>(SNOOZE_KEY, [])) {
     out.push({ key: sn.key, triggerAt: sn.triggerAt, base: sn.alarm, snoozed: true });
@@ -99,6 +120,60 @@ function computePending(state: AppState, now: number): PendingAlarm[] {
 
   out.sort((a, b) => a.triggerAt - b.triggerAt);
   return out;
+}
+
+function computeStandardNotifications(state: AppState, now: number): StandardNotificationLike[] {
+  const calendarIds = new Set(state.calendars.map((calendar) => calendar.id));
+  const calendarById = new Map(state.calendars.map((calendar) => [calendar.id, calendar]));
+  const occurrences = expandEvents(
+    state.events,
+    calendarIds,
+    now,
+    now + NOTIFICATION_LOOKAHEAD,
+  );
+  const pending: StandardNotificationLike[] = [];
+
+  for (const occurrence of occurrences) {
+    const calendar = calendarById.get(occurrence.event.calendarId);
+    // Google already delivers its own reminders. Carillon only adds the
+    // separate real alarm for those events, avoiding duplicate pushes.
+    if (calendar?.source === 'google' || occurrence.event.allDay) continue;
+    const stableId = occurrence.event.googleEventId ?? occurrence.event.id;
+    for (const minutes of occurrence.event.notifications ?? []) {
+      const triggerAt = occurrence.start - minutes * MS_MIN;
+      if (triggerAt <= now) continue;
+      pending.push({
+        key: `notification:${stableId}@${occurrence.start}@${minutes}`,
+        triggerAt,
+        title: occurrence.event.title || '(untitled)',
+        body:
+          (minutes === 0 ? 'Starting now' : `Starts in ${fmtOffset(minutes)}`) +
+          (occurrence.event.location ? ` · ${occurrence.event.location}` : ''),
+      });
+    }
+  }
+
+  const taskOccurrences = expandTasks(
+    state.tasks,
+    calendarIds,
+    now,
+    now + NOTIFICATION_LOOKAHEAD,
+  );
+  for (const occurrence of taskOccurrences) {
+    if (!occurrence.task.hasTime || occurrence.completed) continue;
+    for (const minutes of occurrence.task.notifications ?? []) {
+      const triggerAt = occurrence.due - minutes * MS_MIN;
+      if (triggerAt <= now) continue;
+      pending.push({
+        key: `notification:task:${occurrence.task.id}@${occurrence.due}@${minutes}`,
+        triggerAt,
+        title: occurrence.task.title || '(untitled task)',
+        body: minutes === 0 ? 'Due now' : `Due in ${fmtOffset(minutes)}`,
+      });
+    }
+  }
+
+  return pending.sort((a, b) => a.triggerAt - b.triggerAt);
 }
 
 async function notifySystem(alarm: RingingAlarm): Promise<void> {
@@ -203,7 +278,8 @@ export function useAlarmEngine(state: AppState): {
   useEffect(() => {
     const now = Date.now();
     const pending = computePending(state, now).filter((p) => p.triggerAt > now);
-    void syncNativeAlarms(pending.slice(0, 24), state.settings.alarmSound);
+    const standardNotifications = computeStandardNotifications(state, now);
+    void syncNativeAlarms(pending, state.settings.alarmSound, standardNotifications);
     // keep the app alive in the background so it can ring for real,
     // rather than relying only on the OS notification chain
     if (pending.length > 0) void startBackgroundKeepAlive();

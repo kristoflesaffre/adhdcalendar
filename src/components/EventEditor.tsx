@@ -1,19 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EventItem, Recurrence } from '../types';
 import { EVENT_PALETTE } from '../types';
 import {
+  addDays,
+  addMonths,
   MS_DAY,
   MS_HOUR,
+  fmtMonth,
   fmtOffset,
-  fromLocalInputValue,
+  fmtTime,
+  isSameDay,
+  minutesOfDay,
+  setMinutesOfDay,
   startOfDay,
-  toLocalDateValue,
-  toLocalInputValue,
+  startOfMonth,
+  startOfWeek,
 } from '../lib/dates';
 import { useStore } from '../state/store';
 import { ensureAudioUnlocked } from '../alarm/sound';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { BellFilled, CalIcon, Clock, Close, Notes, Palette, Pin, Repeat } from './icons';
+import {
+  CalIcon,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Close,
+  Notes,
+  Palette,
+  Pin,
+  ReminderIcon,
+  RingingBell,
+} from './icons';
 
 interface Props {
   draft: EventItem;
@@ -25,7 +43,9 @@ interface Props {
   onSwitchToTask?: () => void;
 }
 
-const QUICK_ALARMS = [5, 10, 15, 20, 30, 60, 1440];
+const QUICK_NOTIFICATIONS = [0, 5, 10, 15, 30, 60, 1440, 10080];
+const ALARM_CHOICES = [0, 5, 10, 15];
+const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, i) => i * 15);
 
 type RecChoice = 'none' | 'DAILY' | 'WEEKDAYS' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
@@ -52,12 +72,212 @@ function choiceToRec(c: RecChoice, start: number): Recurrence | undefined {
   }
 }
 
+function dateButtonLabel(t: number): string {
+  return new Date(t).toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+}
+
+function timeOptionLabel(minutes: number): string {
+  const d = setMinutesOfDay(new Date(), minutes);
+  return fmtTime(d);
+}
+
+function parseTimeInput(value: string): number | null {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d{1,2})(?::|\.|h)?(\d{2})?$/i);
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = match[2] === undefined ? 0 : Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function closestTimeOption(minutes: number): number {
+  return TIME_OPTIONS.reduce((closest, option) =>
+    Math.abs(option - minutes) < Math.abs(closest - minutes) ? option : closest,
+  TIME_OPTIONS[0]);
+}
+
+function parseDateInput(value: string, fallback: number): Date | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const current = new Date(fallback);
+  const iso = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    const year = Number(iso[1]);
+    const month = Number(iso[2]) - 1;
+    const day = Number(iso[3]);
+    const parsed = new Date(year, month, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === month && parsed.getDate() === day) {
+      return parsed;
+    }
+    return null;
+  }
+
+  const numeric = trimmed.match(/^(\d{1,2})(?:[./-](\d{1,2}))?(?:[./-](\d{2,4}))?$/);
+  if (numeric) {
+    const day = Number(numeric[1]);
+    const month = numeric[2] === undefined ? current.getMonth() : Number(numeric[2]) - 1;
+    let year = numeric[3] === undefined ? current.getFullYear() : Number(numeric[3]);
+    if (year < 100) year += 2000;
+    const parsed = new Date(year, month, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === month && parsed.getDate() === day) {
+      return parsed;
+    }
+    return null;
+  }
+
+  const monthNames = [
+    'january',
+    'february',
+    'march',
+    'april',
+    'may',
+    'june',
+    'july',
+    'august',
+    'september',
+    'october',
+    'november',
+    'december',
+  ];
+  const words = trimmed
+    .toLowerCase()
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .filter((part) => !['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].includes(part));
+  const dayIndex = words.findIndex((part) => /^\d{1,2}$/.test(part));
+  const monthIndex = words.findIndex((part) => monthNames.some((month) => month.startsWith(part)));
+  if (dayIndex !== -1 && monthIndex !== -1) {
+    const day = Number(words[dayIndex]);
+    const month = monthNames.findIndex((monthName) => monthName.startsWith(words[monthIndex]));
+    const explicitYear = words.find((part) => /^\d{4}$/.test(part));
+    const year = explicitYear ? Number(explicitYear) : current.getFullYear();
+    const parsed = new Date(year, month, day);
+    if (parsed.getFullYear() === year && parsed.getMonth() === month && parsed.getDate() === day) {
+      return parsed;
+    }
+    return null;
+  }
+
+  const natural = new Date(trimmed);
+  return Number.isFinite(natural.getTime()) ? natural : null;
+}
+
+function InlineDatePicker({
+  value,
+  weekStartsOn,
+  onChange,
+}: {
+  value: number;
+  weekStartsOn: 0 | 1;
+  onChange: (day: Date) => void;
+}) {
+  const selected = startOfDay(value);
+  const [cursor, setCursor] = useState(() => startOfMonth(selected));
+
+  useEffect(() => {
+    setCursor(startOfMonth(selected));
+  }, [selected.getFullYear(), selected.getMonth()]);
+
+  const gridStart = startOfWeek(cursor, weekStartsOn);
+  const cells = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
+  const dows = Array.from({ length: 7 }, (_, i) => addDays(gridStart, i));
+
+  return (
+    <div className="desktop-date-picker" onMouseDown={(e) => e.preventDefault()}>
+      <div className="desktop-date-head">
+        <strong>{fmtMonth(cursor)}</strong>
+        <span>
+          <button className="icon-btn" aria-label="Previous month" onClick={() => setCursor(addMonths(cursor, -1))}>
+            <ChevronLeft size={16} />
+          </button>
+          <button className="icon-btn" aria-label="Next month" onClick={() => setCursor(addMonths(cursor, 1))}>
+            <ChevronRight size={16} />
+          </button>
+        </span>
+      </div>
+      <div className="desktop-date-grid">
+        {dows.map((d) => (
+          <div key={d.getTime()} className="desktop-date-dow">
+            {d.toLocaleDateString('en-GB', { weekday: 'narrow' })}
+          </div>
+        ))}
+        {cells.map((d) => {
+          const out = d.getMonth() !== cursor.getMonth();
+          const selectedDay = isSameDay(d, selected);
+          return (
+            <button
+              key={d.getTime()}
+              className={`desktop-date-cell${out ? ' is-out' : ''}${selectedDay ? ' is-selected' : ''}`}
+              onClick={() => onChange(d)}
+            >
+              {d.getDate()}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TimeMenu({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (minutes: number) => void;
+}) {
+  const selected = closestTimeOption(value);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const selectedButton = menuRef.current?.querySelector<HTMLButtonElement>('[data-selected="true"]');
+    selectedButton?.scrollIntoView({ block: 'center' });
+  }, [selected]);
+
+  return (
+    <div className="desktop-time-menu" role="menu" ref={menuRef}>
+      {TIME_OPTIONS.map((minutes) => (
+        <button
+          key={minutes}
+          className={minutes === selected ? 'is-selected' : ''}
+          data-selected={minutes === selected ? 'true' : undefined}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => onChange(minutes)}
+        >
+          {timeOptionLabel(minutes)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchToTask }: Props) {
   const { state } = useStore();
   const isMobile = useIsMobile();
   const [ev, setEv] = useState<EventItem>(draft);
-  const [customAlarm, setCustomAlarm] = useState('');
+  const [customNotification, setCustomNotification] = useState('');
+  const [dateOpen, setDateOpen] = useState(false);
+  const [timeMenu, setTimeMenu] = useState<null | 'start' | 'end'>(null);
+  const [dateText, setDateText] = useState(() => dateButtonLabel(draft.start));
+  const [startTimeText, setStartTimeText] = useState(() => fmtTime(draft.start));
+  const [endTimeText, setEndTimeText] = useState(() => fmtTime(draft.end));
   const writableCals = state.calendars.filter((c) => !c.readOnly);
+  const selectedCalendar = useMemo(
+    () => state.calendars.find((c) => c.id === ev.calendarId),
+    [state.calendars, ev.calendarId],
+  );
+  const startMinutes = minutesOfDay(ev.start);
+  const endMinutes = minutesOfDay(ev.end);
+  const startMenuMinutes = parseTimeInput(startTimeText) ?? startMinutes;
+  const endMenuMinutes = parseTimeInput(endTimeText) ?? endMinutes;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -69,6 +289,12 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!dateOpen) setDateText(dateButtonLabel(ev.start));
+    if (timeMenu !== 'start') setStartTimeText(fmtTime(ev.start));
+    if (timeMenu !== 'end') setEndTimeText(fmtTime(ev.end));
+  }, [dateOpen, ev.start, ev.end, timeMenu]);
 
   const patch = (p: Partial<EventItem>) => setEv((cur) => ({ ...cur, ...p }));
 
@@ -82,16 +308,66 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
     }));
   };
 
-  const addCustomAlarm = () => {
-    const m = parseInt(customAlarm, 10);
-    if (!Number.isFinite(m) || m < 0 || m > 7 * 1440) return;
-    if (!ev.alarms.includes(m)) toggleAlarm(m);
-    setCustomAlarm('');
+  const toggleNotification = (minutes: number) => {
+    setEv((cur) => ({
+      ...cur,
+      notifications: cur.notifications.includes(minutes)
+        ? cur.notifications.filter((m) => m !== minutes)
+        : [...cur.notifications, minutes].sort((a, b) => b - a),
+    }));
   };
 
-  const setStart = (t: number) => {
+  const addCustomNotification = () => {
+    const m = parseInt(customNotification, 10);
+    if (!Number.isFinite(m) || m < 0 || m > 7 * 1440) return;
+    if (!ev.notifications.includes(m)) toggleNotification(m);
+    setCustomNotification('');
+  };
+
+  const setDate = (day: Date) => {
+    const s = setMinutesOfDay(day, minutesOfDay(ev.start)).getTime();
+    setDateText(dateButtonLabel(s));
+    patch({ start: s, end: s + (ev.end - ev.start) });
+    setDateOpen(false);
+  };
+
+  const commitTypedDate = () => {
+    const day = parseDateInput(dateText, ev.start);
+    if (!day) {
+      setDateText(dateButtonLabel(ev.start));
+      setDateOpen(false);
+      return;
+    }
+    setDate(day);
+  };
+
+  const setStartMinutes = (minutes: number) => {
+    const nextStart = setMinutesOfDay(ev.start, minutes).getTime();
     const dur = ev.end - ev.start;
-    patch({ start: t, end: t + dur });
+    setStartTimeText(timeOptionLabel(minutes));
+    setEndTimeText(fmtTime(nextStart + dur));
+    patch({ start: nextStart, end: nextStart + dur });
+    setTimeMenu(null);
+  };
+
+  const setEndMinutes = (minutes: number) => {
+    let nextEnd = setMinutesOfDay(ev.start, minutes).getTime();
+    if (nextEnd <= ev.start) nextEnd += MS_DAY;
+    setEndTimeText(fmtTime(nextEnd));
+    patch({ end: nextEnd });
+    setTimeMenu(null);
+  };
+
+  const commitTypedTime = (field: 'start' | 'end') => {
+    const text = field === 'start' ? startTimeText : endTimeText;
+    const minutes = parseTimeInput(text);
+    if (minutes === null) {
+      if (field === 'start') setStartTimeText(fmtTime(ev.start));
+      else setEndTimeText(fmtTime(ev.end));
+      return;
+    }
+    if (field === 'start') setStartMinutes(minutes);
+    else setEndMinutes(minutes);
   };
 
   const setAllDay = (allDay: boolean) => {
@@ -114,7 +390,7 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
 
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={isNew ? 'New event' : 'Edit event'}>
+      <div className="modal event-quick-modal" role="dialog" aria-modal="true" aria-label={isNew ? 'New event' : 'Edit event'}>
         {isMobile ? (
           <div className="sheet-head">
             <button className="sheet-cancel" onClick={onClose}>
@@ -131,18 +407,18 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
             </button>
           </div>
         ) : (
-          <div className="modal-head">
-            <h2 className="modal-title">{isNew ? 'New event' : 'Edit event'}</h2>
+          <div className="event-quick-head">
+            <Notes size={22} />
             <button className="icon-btn" aria-label="Close" onClick={onClose}>
-              <Close size={16} />
+              <Close size={22} />
             </button>
           </div>
         )}
 
-        <div className="modal-body">
+        <div className="modal-body event-quick-body">
           <input
-            className="title-input"
-            placeholder="Add a title"
+            className="title-input event-quick-title"
+            placeholder="Add title"
             value={ev.title}
             autoFocus
             onChange={(e) => patch({ title: e.target.value })}
@@ -150,182 +426,178 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
           />
 
           {isNew && onSwitchToTask && (
-            <div className="kind-chips">
+            <div className="event-kind-tabs">
               <button
-                className="cal-chip"
+                className="event-kind-tab is-active"
                 aria-pressed="true"
-                style={{ ['--chip-color' as any]: 'var(--accent)' }}
               >
                 Event
               </button>
-              <button className="cal-chip" onClick={onSwitchToTask}>
+              <button className="event-kind-tab" onClick={onSwitchToTask}>
                 Task
+              </button>
+              <button className="event-kind-tab" disabled>
+                Appointment schedule
               </button>
             </div>
           )}
 
-          <div className="field-row">
-            <Clock size={16} />
-            {ev.allDay ? (
-              <>
-                <input
-                  type="date"
-                  className="input grow"
-                  value={toLocalDateValue(ev.start)}
-                  onChange={(e) => {
-                    const s = new Date(e.target.value).getTime();
-                    if (Number.isFinite(s)) patch({ start: s, end: Math.max(ev.end - ev.start, MS_DAY) + s });
-                  }}
-                />
-                <span style={{ color: 'var(--muted)' }}>to</span>
-                <input
-                  type="date"
-                  className="input grow"
-                  value={toLocalDateValue(ev.end - 1)}
-                  onChange={(e) => {
-                    const d = new Date(e.target.value).getTime();
-                    if (Number.isFinite(d)) patch({ end: Math.max(d + MS_DAY, ev.start + MS_DAY) });
-                  }}
-                />
-              </>
-            ) : (
-              <>
-                <input
-                  type="datetime-local"
-                  className="input grow"
-                  value={toLocalInputValue(ev.start)}
-                  onChange={(e) => {
-                    const t = fromLocalInputValue(e.target.value);
-                    if (Number.isFinite(t)) setStart(t);
-                  }}
-                />
-                <span style={{ color: 'var(--muted)' }}>to</span>
-                <input
-                  type="datetime-local"
-                  className="input grow"
-                  value={toLocalInputValue(ev.end)}
-                  min={toLocalInputValue(ev.start)}
-                  onChange={(e) => {
-                    const t = fromLocalInputValue(e.target.value);
-                    if (Number.isFinite(t) && t > ev.start) patch({ end: t });
-                  }}
-                />
-              </>
-            )}
-          </div>
-
-          <div className="field-row allday-toggle-row" style={{ paddingLeft: 28 }}>
-            <label className="check-row">
-              All day
-              <input
-                type="checkbox"
-                className="ios-switch"
-                checked={ev.allDay}
-                onChange={(e) => setAllDay(e.target.checked)}
-              />
-            </label>
-          </div>
-
-          <div className="field-row">
-            <Repeat size={16} />
-            <select
-              className="input grow"
-              value={recToChoice(ev.recurrence)}
-              onChange={(e) => patch({ recurrence: choiceToRec(e.target.value as RecChoice, ev.start), exceptions: undefined })}
-            >
-              <option value="none">Does not repeat</option>
-              <option value="DAILY">Daily</option>
-              <option value="WEEKDAYS">Every weekday (Mon–Fri)</option>
-              <option value="WEEKLY">Weekly on {new Date(ev.start).toLocaleDateString('en-GB', { weekday: 'long' })}</option>
-              <option value="MONTHLY">Monthly on day {new Date(ev.start).getDate()}</option>
-              <option value="YEARLY">Yearly</option>
-            </select>
-          </div>
-
-          {/* ——— the signature: real alarms ——— */}
-          {!ev.allDay && (
-            <section className="alarm-section">
-              <div className="alarm-section-head">
-                <BellFilled size={14} />
-                Alarms
-              </div>
-              <p className="alarm-section-sub">
-                Not a notification — a real alarm that rings until you stop it. Add as many as you need.
-              </p>
-              <div className="alarm-chips">
-                {[...new Set([...QUICK_ALARMS, ...ev.alarms])]
-                  .sort((a, b) => a - b)
-                  .map((m) => {
-                    const on = ev.alarms.includes(m);
-                    return (
-                      <button
-                        key={m}
-                        className="chip-btn"
-                        aria-pressed={on}
-                        onClick={() => toggleAlarm(m)}
-                      >
-                        {fmtOffset(m)}
-                        {on && <span className="x">×</span>}
-                      </button>
-                    );
-                  })}
-                <span className="custom-alarm">
+          <div className="event-widget-row event-time-widget">
+            <Clock size={22} />
+            <div className="event-widget-main">
+              <div className="event-date-time-line">
+                <span className="event-popover-wrap">
                   <input
-                    type="number"
-                    min={0}
-                    placeholder="min"
-                    value={customAlarm}
-                    onChange={(e) => setCustomAlarm(e.target.value)}
+                    className={`event-gray-chip event-date-chip${dateOpen ? ' is-open' : ''}`}
+                    value={dateText}
+                    aria-label="Event date"
+                    onFocus={(e) => {
+                      e.currentTarget.select();
+                      setDateOpen(true);
+                      setTimeMenu(null);
+                    }}
+                    onChange={(e) => setDateText(e.target.value)}
+                    onBlur={commitTypedDate}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
-                        addCustomAlarm();
+                        commitTypedDate();
                       }
                     }}
-                    aria-label="Custom alarm, minutes before"
                   />
-                  <button className="chip-btn" onClick={addCustomAlarm}>
-                    + Add
-                  </button>
+                  {dateOpen && (
+                    <InlineDatePicker
+                      value={ev.start}
+                      weekStartsOn={state.settings.weekStartsOn}
+                      onChange={setDate}
+                    />
+                  )}
                 </span>
+                {!ev.allDay && (
+                  <>
+                    <span className="event-popover-wrap">
+                      <input
+                        className={`event-gray-chip event-time-chip${timeMenu === 'start' ? ' is-open' : ''}`}
+                        value={startTimeText}
+                        inputMode="numeric"
+                        aria-label="Start time"
+                        onFocus={(e) => {
+                          e.currentTarget.select();
+                          setTimeMenu('start');
+                          setDateOpen(false);
+                        }}
+                        onChange={(e) => setStartTimeText(e.target.value)}
+                        onBlur={() => commitTypedTime('start')}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            commitTypedTime('start');
+                          }
+                        }}
+                      />
+                      {timeMenu === 'start' && <TimeMenu value={startMenuMinutes} onChange={setStartMinutes} />}
+                    </span>
+                    <span className="event-time-dash">–</span>
+                    <span className="event-popover-wrap">
+                      <input
+                        className={`event-gray-chip event-time-chip${timeMenu === 'end' ? ' is-open' : ''}`}
+                        value={endTimeText}
+                        inputMode="numeric"
+                        aria-label="End time"
+                        onFocus={(e) => {
+                          e.currentTarget.select();
+                          setTimeMenu('end');
+                          setDateOpen(false);
+                        }}
+                        onChange={(e) => setEndTimeText(e.target.value)}
+                        onBlur={() => commitTypedTime('end')}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            commitTypedTime('end');
+                          }
+                        }}
+                      />
+                      {timeMenu === 'end' && <TimeMenu value={endMenuMinutes} onChange={setEndMinutes} />}
+                    </span>
+                  </>
+                )}
               </div>
-            </section>
-          )}
-
-          <div className="field-row">
-            <CalIcon size={16} />
-            {isMobile ? (
-              <div className="cal-chip-row">
-                {writableCals.map((c) => (
-                  <button
-                    key={c.id}
-                    className="cal-chip"
-                    aria-pressed={ev.calendarId === c.id}
-                    style={{ ['--chip-color' as any]: c.color }}
-                    onClick={() => patch({ calendarId: c.id })}
+              <div className="event-time-options">
+                <label className="event-check">
+                  <input
+                    type="checkbox"
+                    checked={ev.allDay}
+                    onChange={(e) => setAllDay(e.target.checked)}
+                  />
+                  <span>All day</span>
+                </label>
+                <button className="event-link" type="button">Time zone</button>
+                <label className="event-select-chip">
+                  <select
+                    value={recToChoice(ev.recurrence)}
+                    onChange={(e) =>
+                      patch({ recurrence: choiceToRec(e.target.value as RecChoice, ev.start), exceptions: undefined })
+                    }
                   >
-                    <span className="dot" style={{ background: c.color }} />
-                    {c.name}
-                  </button>
-                ))}
+                    <option value="none">Does not repeat</option>
+                    <option value="DAILY">Daily</option>
+                    <option value="WEEKDAYS">Every weekday (Mon–Fri)</option>
+                    <option value="WEEKLY">Weekly on {new Date(ev.start).toLocaleDateString('en-GB', { weekday: 'long' })}</option>
+                    <option value="MONTHLY">Monthly on day {new Date(ev.start).getDate()}</option>
+                    <option value="YEARLY">Yearly</option>
+                  </select>
+                  <ChevronDown size={16} />
+                </label>
               </div>
-            ) : (
-              <select
-                className="input grow"
-                value={ev.calendarId}
-                onChange={(e) => patch({ calendarId: e.target.value })}
-              >
-                {writableCals.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            )}
+            </div>
           </div>
 
-          <div className="field-row">
-            <Palette size={16} />
+          <label className="event-widget-row">
+            <Pin size={22} />
+            <input
+              className="event-row-input"
+              placeholder="Add location"
+              value={ev.location ?? ''}
+              onChange={(e) => patch({ location: e.target.value || undefined })}
+            />
+          </label>
+
+          <label className="event-widget-row event-description-row">
+            <Notes size={22} />
+            <textarea
+              className="event-row-input"
+              placeholder="Add description or attachment"
+              rows={2}
+              value={ev.description ?? ''}
+              onChange={(e) => patch({ description: e.target.value || undefined })}
+            />
+          </label>
+
+          <div className="event-widget-row event-calendar-row">
+            <CalIcon size={22} />
+            <div className="event-widget-main">
+              <label className="event-calendar-select">
+                <select
+                  value={ev.calendarId}
+                  onChange={(e) => patch({ calendarId: e.target.value })}
+                >
+                  {writableCals.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="dot" style={{ background: selectedCalendar?.color }} />
+              </label>
+              <div className="event-calendar-sub">
+                Busy · Default visibility · {ev.notifications.length} notification{ev.notifications.length === 1 ? '' : 's'}
+              </div>
+            </div>
+          </div>
+
+          <div className="event-widget-row event-color-row">
+            <Palette size={22} />
             <div className="swatches">
               <button
                 className="swatch"
@@ -333,7 +605,7 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
                 aria-label="Calendar color"
                 title="Use calendar color"
                 style={{
-                  background: state.calendars.find((c) => c.id === ev.calendarId)?.color,
+                  background: selectedCalendar?.color,
                   opacity: 0.45,
                 }}
                 onClick={() => patch({ color: undefined })}
@@ -352,26 +624,72 @@ export function EventEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchT
             </div>
           </div>
 
-          <div className="field-row">
-            <Pin size={16} />
-            <input
-              className="input grow"
-              placeholder="Add location"
-              value={ev.location ?? ''}
-              onChange={(e) => patch({ location: e.target.value || undefined })}
-            />
-          </div>
+          {!ev.allDay && (
+            <div className="event-widget-row event-reminder-row">
+              <ReminderIcon size={22} />
+              <div className="event-widget-main">
+                <div className="event-row-title">Notifications</div>
+                <div className="alarm-chips">
+                  {[...new Set([...QUICK_NOTIFICATIONS, ...ev.notifications])]
+                    .sort((a, b) => a - b)
+                    .map((m) => {
+                      const on = ev.notifications.includes(m);
+                      return (
+                        <button
+                          key={m}
+                          className="chip-btn"
+                          aria-pressed={on}
+                          onClick={() => toggleNotification(m)}
+                        >
+                          {fmtOffset(m)}
+                          {on && <span className="x">×</span>}
+                        </button>
+                      );
+                    })}
+                  <span className="custom-alarm">
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="min"
+                      value={customNotification}
+                      onChange={(e) => setCustomNotification(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addCustomNotification();
+                        }
+                      }}
+                      aria-label="Custom notification, minutes before"
+                    />
+                    <button className="chip-btn" onClick={addCustomNotification}>
+                      + Add
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
-          <div className="field-row" style={{ alignItems: 'flex-start' }}>
-            <Notes size={16} />
-            <textarea
-              className="input grow"
-              placeholder="Add description"
-              rows={2}
-              value={ev.description ?? ''}
-              onChange={(e) => patch({ description: e.target.value || undefined })}
-            />
-          </div>
+          {!ev.allDay && (
+            <div className="event-widget-row event-reminder-row">
+              <RingingBell size={22} />
+              <div className="event-widget-main">
+                <div className="event-row-title">Alarm</div>
+                <div className="alarm-chips" role="group" aria-label="Alarm time">
+                  {ALARM_CHOICES.map((m) => (
+                    <button
+                      key={m}
+                      className="chip-btn"
+                      aria-pressed={ev.alarms.includes(m)}
+                      onClick={() => toggleAlarm(m)}
+                    >
+                      {m} min
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {isMobile && !isNew && onDelete && (
             <button className="sheet-delete" onClick={onDelete}>

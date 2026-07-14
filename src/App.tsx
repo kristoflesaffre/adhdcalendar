@@ -1,7 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CalendarInfo, EventItem, Occurrence, TaskItem, TaskOccurrence, ViewMode } from '../src/types';
+import type {
+  AlarmClockItem,
+  CalendarInfo,
+  EventItem,
+  Occurrence,
+  TaskItem,
+  TaskOccurrence,
+  ViewMode,
+} from '../src/types';
 import { useStore, draftEvent } from './state/store';
 import { expandEvents, expandTasks } from './lib/recurrence';
+import {
+  ALARM_CALENDAR,
+  alarmClockEvents,
+  alarmClockIdFromEvent,
+  nextAlarmMoment,
+} from './lib/alarmClocks';
 import {
   MS_DAY,
   addDays,
@@ -11,6 +25,7 @@ import {
   startOfWeek,
 } from './lib/dates';
 import { useAlarmEngine } from './alarm/engine';
+import { syncTimerLiveActivities } from './native/alarmAudio';
 import { AlarmOverlay } from './alarm/AlarmOverlay';
 import { ensureAudioUnlocked } from './alarm/sound';
 import { TopBar } from './components/TopBar';
@@ -19,18 +34,23 @@ import { MonthView } from './components/MonthView';
 import { TimeGrid } from './components/TimeGrid';
 import { AgendaView } from './components/AgendaView';
 import { TodayView } from './components/TodayView';
+import { AlarmsView } from './components/AlarmsView';
+import { TimersView } from './components/TimersView';
+import { AlarmEditor } from './components/AlarmEditor';
 import { MobileTopBar } from './components/MobileTopBar';
 import { MobileTabBar } from './components/MobileTabBar';
 import type { MobileTab } from './components/MobileTabBar';
+import type { DesktopTab } from './components/TopBar';
 import { MenuDrawer } from './components/MenuDrawer';
 import { SwipeViews } from './components/SwipeViews';
 import { EventEditor } from './components/EventEditor';
+import { EventSheet } from './components/EventSheet';
 import { TaskEditor, draftTask } from './components/TaskEditor';
 import { EventPopover } from './components/EventPopover';
 import { SettingsModal } from './components/SettingsModal';
 import { GoogleConnectModal } from './components/GoogleConnectModal';
 import { CalendarEditor } from './components/CalendarEditor';
-import { Plus } from './components/icons';
+import { CalIcon, Plus, TaskIcon } from './components/icons';
 import { dayKey } from './components/MiniMonth';
 import { parseIcs } from './lib/ics';
 import { fetchIcsText, googleIdFromIcsUrl } from './lib/icsUrl';
@@ -62,18 +82,67 @@ export default function App() {
     window.matchMedia(MOBILE_QUERY).matches ? 'schedule' : 'week',
   );
   const [date, setDate] = useState<Date>(() => startOfDay(new Date()));
+  const [desktopTransitionDir, setDesktopTransitionDir] = useState<1 | -1>(1);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
+  const [alarmEditor, setAlarmEditor] = useState<{
+    alarm: AlarmClockItem;
+    mode: 'full' | 'options';
+  } | null>(null);
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [googleOpen, setGoogleOpen] = useState(false);
   const [calEditor, setCalEditor] = useState<{ cal: CalendarInfo | null } | null>(null);
-  const [tab, setTab] = useState<MobileTab>('today');
+  const [tab, setTab] = useState<MobileTab>('calendar');
+  const [desktopTab, setDesktopTab] = useState<DesktopTab>('calendar');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [jumpSignal, setJumpSignal] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const { ringing, dismiss, snooze, nextAlarm } = useAlarmEngine(state);
+  /* clock alarms are projected into the calendar as synthetic events in a
+     virtual read-only "Alarms" calendar: every view and the whole real-alarm
+     pipeline (native ring included) picks them up for free */
+  const alarmEvents = useMemo(() => alarmClockEvents(state.alarmClocks), [state.alarmClocks]);
+  const allEvents = useMemo(
+    () => (alarmEvents.length ? [...state.events, ...alarmEvents] : state.events),
+    [state.events, alarmEvents],
+  );
+  const allCalendars = useMemo(
+    () => (alarmEvents.length ? [...state.calendars, ALARM_CALENDAR] : state.calendars),
+    [state.calendars, alarmEvents.length],
+  );
+  const engineState = useMemo(
+    () => ({ ...state, events: allEvents, calendars: allCalendars }),
+    [state, allEvents, allCalendars],
+  );
+
+  const { ringing, dismiss, snooze, nextAlarm } = useAlarmEngine(engineState);
+
+  /* stopping a rung timer also clears its card */
+  const dismissRinging = useCallback(
+    (key: string) => {
+      const m = key.match(/^timer:([^@]+)@/);
+      if (m) dispatch({ type: 'timer/cancel', id: m[1] });
+      dismiss(key);
+    },
+    [dismiss, dispatch],
+  );
+
+  /* a fired one-time alarm switches itself off, like iOS */
+  useEffect(() => {
+    const check = () => {
+      const now = Date.now();
+      for (const alarm of state.alarmClocks) {
+        if (alarm.enabled && !alarm.repeatDays.length && alarm.anchor < now - 60_000) {
+          dispatch({ type: 'alarm/setEnabled', id: alarm.id, enabled: false });
+        }
+      }
+    };
+    check();
+    const id = window.setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, [state.alarmClocks, dispatch]);
 
   /* ---- two-way Google sync plumbing ---- */
   const calById = useMemo(() => new Map(state.calendars.map((c) => [c.id, c])), [state.calendars]);
@@ -93,12 +162,6 @@ export default function App() {
     },
     [calById, state.settings.googleClientId, onSynced],
   );
-
-  /* the desktop grid has no Schedule or 3-Day — fall back to Week if the
-     window grows past the mobile breakpoint while one was active */
-  useEffect(() => {
-    if (!isMobile && (view === 'schedule' || view === '3day')) setView('week');
-  }, [isMobile, view]);
 
   /* theme */
   useEffect(() => {
@@ -137,7 +200,11 @@ export default function App() {
         try {
           const text = await fetchIcsText(cal.icsUrl!);
           if (cancelled) return;
-          const parsed = parseIcs(text, state.settings.defaultAlarms);
+          const parsed = parseIcs(
+            text,
+            state.settings.defaultAlarms,
+            state.settings.defaultNotifications,
+          );
           dispatch({
             type: 'calendar/importEvents',
             calendar: { ...cal, syncedAt: Date.now() },
@@ -158,7 +225,13 @@ export default function App() {
       if (!token || cancelled) return;
       for (const cal of twoWay) {
         try {
-          const events = await fetchGoogleEvents(token, cal.googleId!, cal.id, state.settings.defaultAlarms);
+          const events = await fetchGoogleEvents(
+            token,
+            cal.googleId!,
+            cal.id,
+            state.settings.defaultAlarms,
+            state.settings.defaultNotifications,
+          );
           if (cancelled) return;
           dispatch({
             type: 'calendar/importEvents',
@@ -177,10 +250,15 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* keep the iOS home-screen widget in sync */
+  /* keep the iOS home-screen widget in sync (incl. clock alarms) */
   useEffect(() => {
-    scheduleWidgetUpdate(state);
-  }, [state]);
+    scheduleWidgetUpdate(engineState);
+  }, [engineState]);
+
+  /* running timers live on the lock screen as Live Activities */
+  useEffect(() => {
+    void syncTimerLiveActivities(state.timers);
+  }, [state.timers]);
 
   /* unlock audio on the first user gesture so alarms can ring */
   useEffect(() => {
@@ -226,20 +304,20 @@ export default function App() {
   const swipePad = spanDays * MS_DAY;
 
   const visibleIds = useMemo(
-    () => new Set(state.calendars.filter((c) => c.visible).map((c) => c.id)),
-    [state.calendars],
+    () => new Set(allCalendars.filter((c) => c.visible).map((c) => c.id)),
+    [allCalendars],
   );
 
   const occurrences = useMemo(
-    () => expandEvents(state.events, visibleIds, rangeStart - swipePad, rangeEnd + swipePad),
-    [state.events, visibleIds, rangeStart, rangeEnd, swipePad],
+    () => expandEvents(allEvents, visibleIds, rangeStart - swipePad, rangeEnd + swipePad),
+    [allEvents, visibleIds, rangeStart, rangeEnd, swipePad],
   );
 
   /* the mobile Schedule view scrolls through real time, not the nav date */
   const agendaOccurrences = useMemo(() => {
     const now = Date.now();
-    return expandEvents(state.events, visibleIds, now - 3 * MS_DAY, now + 180 * MS_DAY);
-  }, [state.events, visibleIds]);
+    return expandEvents(allEvents, visibleIds, now - 3 * MS_DAY, now + 180 * MS_DAY);
+  }, [allEvents, visibleIds]);
 
   const taskOccurrences = useMemo(
     () => expandTasks(state.tasks, visibleIds, rangeStart - swipePad, rangeEnd + swipePad),
@@ -256,11 +334,20 @@ export default function App() {
     (at?: number) => {
       const firstWritable = state.calendars.find((c) => !c.readOnly);
       if (!firstWritable) return;
+      setCreateMenuOpen(false);
       setPopover(null);
       setEditor(null);
-      setTaskEditor({ draft: draftTask(firstWritable.id, at), isNew: true });
+      setTaskEditor({
+        draft: draftTask(
+          firstWritable.id,
+          state.settings.defaultNotifications,
+          state.settings.defaultAlarms,
+          at,
+        ),
+        isNew: true,
+      });
     },
-    [state.calendars],
+    [state.calendars, state.settings.defaultAlarms, state.settings.defaultNotifications],
   );
 
   const toggleTask = useCallback(
@@ -287,15 +374,16 @@ export default function App() {
     const s = addMonths(startOfMonth(date), -1).getTime();
     const e = addMonths(startOfMonth(date), 2).getTime();
     const set = new Set<string>();
-    for (const occ of expandEvents(state.events, visibleIds, s, e)) {
+    for (const occ of expandEvents(allEvents, visibleIds, s, e)) {
       set.add(dayKey(new Date(occ.start)));
     }
     return set;
-  }, [state.events, visibleIds, date]);
+  }, [allEvents, visibleIds, date]);
 
   const navigate = useCallback(
     (dir: -1 | 0 | 1) => {
       setPopover(null);
+      setDesktopTransitionDir(dir === -1 ? -1 : 1);
       if (dir === 0) {
         setDate(startOfDay(new Date()));
         return;
@@ -313,7 +401,13 @@ export default function App() {
     (start?: number, end?: number, allDay = false) => {
       const firstWritable = state.calendars.find((c) => !c.readOnly);
       if (!firstWritable) return;
-      const d = draftEvent(firstWritable.id, state.settings.defaultAlarms, start);
+      setCreateMenuOpen(false);
+      const d = draftEvent(
+        firstWritable.id,
+        state.settings.defaultNotifications,
+        state.settings.defaultAlarms,
+        start,
+      );
       if (start && end) {
         d.end = end;
       }
@@ -321,7 +415,24 @@ export default function App() {
       setPopover(null);
       setEditor({ draft: d, isNew: true });
     },
-    [state.calendars, state.settings.defaultAlarms],
+    [state.calendars, state.settings.defaultAlarms, state.settings.defaultNotifications],
+  );
+
+  /* tapping an alarm's calendar block opens the alarm editor, not the event popover */
+  const openEventPopover = useCallback(
+    (occ: Occurrence, anchor: DOMRect) => {
+      const alarmId = alarmClockIdFromEvent(occ.event.id);
+      if (alarmId) {
+        const alarm = state.alarmClocks.find((a) => a.id === alarmId);
+        if (alarm) {
+          setPopover(null);
+          setAlarmEditor({ alarm, mode: 'full' });
+          return;
+        }
+      }
+      setPopover({ occ, anchor });
+    },
+    [state.alarmClocks],
   );
 
   const openOccurrence = useCallback((occ: Occurrence, anchor?: DOMRect) => {
@@ -333,6 +444,41 @@ export default function App() {
       setPopover({ occ, anchor: r });
     }
   }, []);
+
+  const openNextAlarm = useCallback(() => {
+    if (!nextAlarm) return;
+    const alarmId = alarmClockIdFromEvent(nextAlarm.base.eventId);
+    if (alarmId) {
+      const alarm = state.alarmClocks.find((a) => a.id === alarmId);
+      if (alarm) {
+        setAlarmEditor({ alarm, mode: 'full' });
+        return;
+      }
+    }
+    const event = state.events.find((ev) => ev.id === nextAlarm.base.eventId);
+    if (event) {
+      const start = nextAlarm.base.occStart;
+      openOccurrence(
+        {
+          event,
+          start,
+          end: start + (event.end - event.start),
+          key: `${event.id}@${start}`,
+        },
+      );
+      return;
+    }
+
+    const task = state.tasks.find((item) => item.id === nextAlarm.base.eventId);
+    if (task) {
+      openTask({
+        task,
+        due: nextAlarm.base.occStart,
+        key: `${task.id}@${nextAlarm.base.occStart}`,
+        completed: task.completedOn?.includes(nextAlarm.base.occStart) ?? false,
+      });
+    }
+  }, [nextAlarm, openOccurrence, openTask, state.events, state.tasks, state.alarmClocks]);
 
   const moveOccurrence = useCallback(
     (occ: Occurrence, newStart: number, newEnd: number) => {
@@ -396,6 +542,10 @@ export default function App() {
   /* keyboard shortcuts */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && createMenuOpen) {
+        setCreateMenuOpen(false);
+        return;
+      }
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
@@ -403,10 +553,12 @@ export default function App() {
         target.tagName === 'SELECT' ||
         editor ||
         taskEditor ||
+        alarmEditor ||
         settingsOpen ||
         googleOpen ||
         calEditor ||
-        drawerOpen
+        drawerOpen ||
+        createMenuOpen
       )
         return;
       switch (e.key) {
@@ -425,6 +577,14 @@ export default function App() {
         case 'm':
         case 'M':
           setView('month');
+          break;
+        case 'a':
+        case 'A':
+          setView('schedule');
+          break;
+        case 'x':
+        case 'X':
+          setView('3day');
           break;
         case 'c':
         case 'C':
@@ -446,11 +606,13 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate, openCreate, editor, taskEditor, settingsOpen, googleOpen, calEditor, drawerOpen]);
+  }, [navigate, openCreate, editor, taskEditor, alarmEditor, settingsOpen, googleOpen, calEditor, drawerOpen, createMenuOpen]);
 
   const popoverCal = popover
-    ? state.calendars.find((c) => c.id === popover.occ.event.calendarId)
+    ? allCalendars.find((c) => c.id === popover.occ.event.calendarId)
     : undefined;
+
+  const desktopContentKey = desktopTab === 'today' ? 'today' : `calendar-${view}-${rangeStart}`;
 
   const gridAndMonth = (
     <>
@@ -459,9 +621,9 @@ export default function App() {
           date={date}
           occurrences={occurrences}
           tasks={taskOccurrences}
-          calendars={state.calendars}
+          calendars={allCalendars}
           weekStartsOn={state.settings.weekStartsOn}
-          onEventClick={(occ, anchor) => setPopover({ occ, anchor })}
+          onEventClick={openEventPopover}
           onTaskClick={openTask}
           onDayClick={(day) => openCreate(day.getTime() + 9 * 3_600_000, day.getTime() + 10 * 3_600_000)}
           onDayNumberClick={(day) => {
@@ -474,9 +636,9 @@ export default function App() {
           days={days}
           occurrences={occurrences}
           tasks={taskOccurrences}
-          calendars={state.calendars}
+          calendars={allCalendars}
           onCreate={(start, end) => openCreate(start, end)}
-          onEventClick={(occ, anchor) => setPopover({ occ, anchor })}
+          onEventClick={openEventPopover}
           onToggleTask={toggleTask}
           onTaskClick={openTask}
           onMoveOccurrence={moveOccurrence}
@@ -497,7 +659,12 @@ export default function App() {
             <MobileTopBar
               view={view}
               date={date}
-              onOpenDrawer={() => setDrawerOpen(true)}
+              busyDays={busyDays}
+              onOpenDrawer={() => {
+                setCreateMenuOpen(false);
+                setDrawerOpen(true);
+              }}
+              onSelectDate={(d) => setDate(startOfDay(d))}
               onOpenOccurrence={(occ) => openOccurrence(occ)}
               onJumpToday={() => {
                 navigate(0);
@@ -510,8 +677,8 @@ export default function App() {
               <TodayView
                 occurrences={agendaOccurrences}
                 tasks={agendaTasks}
-                calendars={state.calendars}
-                onEventClick={(occ, anchor) => setPopover({ occ, anchor })}
+                calendars={allCalendars}
+                onEventClick={openEventPopover}
                 onToggleTask={toggleTask}
                 onTaskClick={openTask}
               />
@@ -520,11 +687,42 @@ export default function App() {
               <AgendaView
                 occurrences={agendaOccurrences}
                 tasks={agendaTasks}
-                calendars={state.calendars}
-                onEventClick={(occ, anchor) => setPopover({ occ, anchor })}
+                calendars={allCalendars}
+                onEventClick={openEventPopover}
                 onToggleTask={toggleTask}
                 onTaskClick={openTask}
+                weekStartsOn={state.settings.weekStartsOn}
                 jumpSignal={jumpSignal}
+              />
+            )}
+            {tab === 'alarms' && (
+              <AlarmsView
+                alarms={state.alarmClocks}
+                onCreate={(alarm) => dispatch({ type: 'alarm/add', alarm })}
+                onToggle={(alarm, enabled) =>
+                  dispatch({
+                    type: 'alarm/setEnabled',
+                    id: alarm.id,
+                    enabled,
+                    // re-enabling a one-time alarm re-aims it at the next occurrence
+                    anchor:
+                      enabled && !alarm.repeatDays.length
+                        ? nextAlarmMoment(alarm.hour, alarm.minute, Date.now())
+                        : undefined,
+                  })
+                }
+                onEdit={(alarm) => setAlarmEditor({ alarm, mode: 'full' })}
+                onEditOptions={(alarm) => setAlarmEditor({ alarm, mode: 'options' })}
+                onDelete={(id) => dispatch({ type: 'alarm/delete', id })}
+              />
+            )}
+            {tab === 'timers' && (
+              <TimersView
+                timers={state.timers}
+                onStart={(timer) => dispatch({ type: 'timer/start', timer })}
+                onCancel={(id) => dispatch({ type: 'timer/cancel', id })}
+                onPause={(id, remaining) => dispatch({ type: 'timer/pause', id, remaining })}
+                onResume={(id, endAt) => dispatch({ type: 'timer/resume', id, endAt })}
               />
             )}
             {tab === 'calendar' && view === 'month' && gridAndMonth}
@@ -540,9 +738,9 @@ export default function App() {
                       days={panelDays}
                       occurrences={occurrences}
                       tasks={taskOccurrences}
-                      calendars={state.calendars}
+                      calendars={allCalendars}
                       onCreate={(start, end) => openCreate(start, end)}
-                      onEventClick={(occ, anchor) => setPopover({ occ, anchor })}
+                      onEventClick={openEventPopover}
                       onToggleTask={toggleTask}
                       onTaskClick={openTask}
                       onMoveOccurrence={moveOccurrence}
@@ -556,12 +754,43 @@ export default function App() {
               />
             )}
           </main>
-          <button className="fab" aria-label="New event" onClick={() => openCreate()}>
-            <Plus size={22} />
-          </button>
+          {createMenuOpen && (
+            <button
+              className="create-menu-scrim"
+              aria-label="Close create menu"
+              onClick={() => setCreateMenuOpen(false)}
+            />
+          )}
+          {/* the hour grid (alarms) and timer grid are their own creation
+              UIs — no FAB on those tabs */}
+          {tab !== 'timers' && tab !== 'alarms' && (
+            <div className={`fab-cluster${createMenuOpen ? ' is-open' : ''}`}>
+              {createMenuOpen && (
+                <div className="fab-actions" role="menu" aria-label="Create">
+                  <button role="menuitem" onClick={() => openCreateTask()}>
+                    <TaskIcon size={22} />
+                    Task
+                  </button>
+                  <button role="menuitem" onClick={() => openCreate()}>
+                    <CalIcon size={22} />
+                    Event
+                  </button>
+                </div>
+              )}
+              <button
+                className={`fab${createMenuOpen ? ' is-open' : ''}`}
+                aria-label={createMenuOpen ? 'Close create menu' : 'Create new'}
+                aria-expanded={createMenuOpen}
+                onClick={() => setCreateMenuOpen((open) => !open)}
+              >
+                <Plus size={22} />
+              </button>
+            </div>
+          )}
           <MobileTabBar
             tab={tab}
             onTab={(t) => {
+              setCreateMenuOpen(false);
               setPopover(null);
               setTab(t);
             }}
@@ -583,17 +812,21 @@ export default function App() {
         <>
           <TopBar
             view={view}
+            tab={desktopTab}
             date={date}
             onView={(v) => {
               setPopover(null);
               setView(v);
             }}
+            onTab={(nextTab) => {
+              setPopover(null);
+              setDesktopTab(nextTab);
+            }}
             onNavigate={navigate}
             onCreate={() => openCreate()}
             onOpenSettings={() => setSettingsOpen(true)}
-            onOpenOccurrence={(occ) => openOccurrence(occ)}
+            onOpenNextAlarm={openNextAlarm}
             nextAlarm={nextAlarm}
-            searchRef={searchRef}
           />
           <div className="body">
             <Sidebar
@@ -605,9 +838,41 @@ export default function App() {
               onCreate={() => openCreate()}
               onEditCalendar={(cal) => setCalEditor({ cal })}
               onOpenGoogle={() => setGoogleOpen(true)}
+              onOpenOccurrence={(occ) => openOccurrence(occ)}
               busyDays={busyDays}
+              searchRef={searchRef}
             />
-            <main className="main">{gridAndMonth}</main>
+            <main className="main">
+              <div
+                key={desktopContentKey}
+                className="desktop-view-transition"
+                style={{ ['--desktop-view-dir' as any]: desktopTransitionDir }}
+              >
+                {desktopTab === 'today' ? (
+                  <TodayView
+                    occurrences={agendaOccurrences}
+                    tasks={agendaTasks}
+                    calendars={allCalendars}
+                    onEventClick={openEventPopover}
+                    onToggleTask={toggleTask}
+                    onTaskClick={openTask}
+                  />
+                ) : view === 'schedule' ? (
+                  <AgendaView
+                    occurrences={agendaOccurrences}
+                    tasks={agendaTasks}
+                    calendars={allCalendars}
+                    onEventClick={openEventPopover}
+                    onToggleTask={toggleTask}
+                    onTaskClick={openTask}
+                    weekStartsOn={state.settings.weekStartsOn}
+                    jumpSignal={jumpSignal}
+                  />
+                ) : (
+                  gridAndMonth
+                )}
+              </div>
+            </main>
           </div>
         </>
       )}
@@ -626,32 +891,32 @@ export default function App() {
         />
       )}
 
-      {editor && (
-        <EventEditor
-          draft={editor.draft}
-          isNew={editor.isNew}
-          onSave={saveEvent}
-          onDelete={
-            editor.isNew
+      {editor &&
+        (() => {
+          // mobile gets the Google iOS-style sheet with inline pickers;
+          // desktop keeps the classic form editor
+          const editorProps = {
+            draft: editor.draft,
+            isNew: editor.isNew,
+            onSave: saveEvent,
+            onDelete: editor.isNew
               ? undefined
               : () => {
                   dispatch({ type: 'event/delete', id: editor.draft.id });
                   pushToGoogle(editor.draft, 'delete');
                   setEditor(null);
-                }
-          }
-          onClose={() => setEditor(null)}
-          onSwitchToTask={
-            editor.isNew
+                },
+            onClose: () => setEditor(null),
+            onSwitchToTask: editor.isNew
               ? () => {
                   const at = editor.draft.start;
                   setEditor(null);
                   openCreateTask(at);
                 }
-              : undefined
-          }
-        />
-      )}
+              : undefined,
+          };
+          return isMobile ? <EventSheet {...editorProps} /> : <EventEditor {...editorProps} />;
+        })()}
 
       {taskEditor && (
         <TaskEditor
@@ -679,6 +944,22 @@ export default function App() {
         />
       )}
 
+      {alarmEditor && (
+        <AlarmEditor
+          alarm={alarmEditor.alarm}
+          mode={alarmEditor.mode}
+          onSave={(alarm) => {
+            dispatch({ type: 'alarm/update', alarm });
+            setAlarmEditor(null);
+          }}
+          onDelete={(id) => {
+            dispatch({ type: 'alarm/delete', id });
+            setAlarmEditor(null);
+          }}
+          onClose={() => setAlarmEditor(null)}
+        />
+      )}
+
       {settingsOpen && (
         <SettingsModal onClose={() => setSettingsOpen(false)} onOpenGoogle={() => setGoogleOpen(true)} />
       )}
@@ -688,7 +969,7 @@ export default function App() {
       <AlarmOverlay
         alarms={ringing}
         alarmSound={state.settings.alarmSound}
-        onDismiss={dismiss}
+        onDismiss={dismissRinging}
         onSnooze={snooze}
       />
     </div>

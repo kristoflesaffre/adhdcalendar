@@ -1,5 +1,6 @@
 import WidgetKit
 import SwiftUI
+import ActivityKit
 
 /**
  * ADHD Calendar home-screen widget — a Todoist-style "Today" card: events
@@ -157,5 +158,135 @@ struct ADHDWidget: Widget {
 struct ADHDWidgetBundle: WidgetBundle {
     var body: some Widget {
         ADHDWidget()
+        TimerLiveActivity()
+    }
+}
+
+/* ============================================================
+   Timer Live Activity — running timers on the lock screen.
+   The app starts/updates/ends these via AlarmAudioPlugin
+   (syncTimerActivities); the countdown itself renders natively,
+   so it keeps ticking while the app is suspended.
+
+   NOTE: this struct is mirrored in AlarmAudioPlugin.swift (the
+   app target). ActivityKit matches the two by type name and
+   encoding, so both definitions must stay identical.
+   ============================================================ */
+
+struct TimerActivityAttributes: ActivityAttributes {
+    public struct ContentState: Codable, Hashable {
+        /** the moment the timer hits zero */
+        var endAt: Date
+        /** remaining seconds, set only while paused */
+        var pausedRemaining: Double?
+    }
+
+    var timerId: String
+    var label: String
+    /** cube-face hue from the app (color = duration) */
+    var hue: Double
+    var totalSeconds: Double
+}
+
+private func cubeColor(_ hue: Double, _ brightness: Double = 0.82) -> Color {
+    Color(hue: hue / 360, saturation: 0.62, brightness: brightness)
+}
+
+private func fmtSeconds(_ s: Double) -> String {
+    let total = max(0, Int(s.rounded()))
+    let h = total / 3600
+    let m = (total % 3600) / 60
+    let sec = total % 60
+    return h > 0
+        ? String(format: "%d:%02d:%02d", h, m, sec)
+        : String(format: "%d:%02d", m, sec)
+}
+
+struct TimerActivityView: View {
+    let context: ActivityViewContext<TimerActivityAttributes>
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(cubeColor(context.attributes.hue).opacity(0.28))
+                Image(systemName: context.state.pausedRemaining != nil ? "pause.fill" : "timer")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(context.attributes.label)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(context.state.pausedRemaining != nil ? "Paused" : "Timer")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let paused = context.state.pausedRemaining {
+                Text(fmtSeconds(paused))
+                    .font(.system(size: 36, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(timerInterval: Date.now...max(Date.now, context.state.endAt), countsDown: true)
+                    .font(.system(size: 36, weight: .bold).monospacedDigit())
+                    .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+                    .frame(maxWidth: 130, alignment: .trailing)
+                    .multilineTextAlignment(.trailing)
+            }
+        }
+        .padding(16)
+    }
+}
+
+struct TimerLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: TimerActivityAttributes.self) { context in
+            TimerActivityView(context: context)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "timer")
+                            .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+                        Text(context.attributes.label)
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .padding(.leading, 6)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    if let paused = context.state.pausedRemaining {
+                        Text(fmtSeconds(paused))
+                            .font(.system(size: 26, weight: .bold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(timerInterval: Date.now...max(Date.now, context.state.endAt), countsDown: true)
+                            .font(.system(size: 26, weight: .bold).monospacedDigit())
+                            .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+                            .frame(maxWidth: 90, alignment: .trailing)
+                    }
+                }
+            } compactLeading: {
+                Image(systemName: "timer")
+                    .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+            } compactTrailing: {
+                if let paused = context.state.pausedRemaining {
+                    Text(fmtSeconds(paused))
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(timerInterval: Date.now...max(Date.now, context.state.endAt), countsDown: true)
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+                        .frame(maxWidth: 52)
+                }
+            } minimal: {
+                Image(systemName: "timer")
+                    .foregroundStyle(cubeColor(context.attributes.hue, 0.95))
+            }
+        }
     }
 }

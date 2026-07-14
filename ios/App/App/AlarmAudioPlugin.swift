@@ -4,6 +4,22 @@ import UserNotifications
 import MediaPlayer
 import WidgetKit
 import WatchConnectivity
+import ActivityKit
+
+/** Mirror of the struct in ADHDWidget/ADHDWidget.swift — ActivityKit
+ *  matches app and widget by type name + encoding, keep them identical. */
+@available(iOS 16.2, *)
+struct TimerActivityAttributes: ActivityAttributes {
+    public struct ContentState: Codable, Hashable {
+        var endAt: Date
+        var pausedRemaining: Double?
+    }
+
+    var timerId: String
+    var label: String
+    var hue: Double
+    var totalSeconds: Double
+}
 
 /** Minimal WCSession delegate so the phone can push the next alarm to the
  *  watch app (which schedules its own smart-alarm wake). */
@@ -58,12 +74,25 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "ring", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setWidgetData", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncTimerActivities", returnType: CAPPluginReturnPromise),
     ]
 
     static let appGroup = "group.be.adhdcalendar.app"
 
     public override func load() {
         WatchLink.shared.activate()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
     }
 
     private var player: AVAudioPlayer?
@@ -77,6 +106,8 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     private var ringResource = "alarm"
     private var ringTitle: String?
     private var ringBody: String?
+    private var isAlarmRinging = false
+    private var scheduledAtMs: Double?
 
     private func activateSession() throws {
         let session = AVAudioSession.sharedInstance()
@@ -94,10 +125,10 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             let p = try AVAudioPlayer(contentsOf: url)
             p.numberOfLoops = -1
             p.volume = 1.0
-            p.play()
             player?.stop()
             player = p
-            return true
+            p.prepareToPlay()
+            return p.play()
         } catch {
             return false
         }
@@ -105,6 +136,29 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func playSilence() {
         play(resource: "silence")
+    }
+
+    @objc private func handleDidEnterBackground() {
+        if isAlarmRinging {
+            _ = play(resource: ringResource)
+        } else if scheduledAtMs != nil {
+            playSilence()
+        }
+    }
+
+    @objc private func handleAudioInterruption(_ notification: Notification) {
+        guard
+            let info = notification.userInfo,
+            let rawType = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+            let type = AVAudioSession.InterruptionType(rawValue: rawType),
+            type == .ended
+        else { return }
+
+        if isAlarmRinging {
+            _ = play(resource: ringResource)
+        } else if scheduledAtMs != nil {
+            playSilence()
+        }
     }
 
     private func validAlarmResource(_ resource: String?) -> String {
@@ -142,17 +196,17 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /**
      * The pending notification chain gets cancelled once the live bell
-     * rings (no double audio) — but the lock screen should still SHOW
-     * what's ringing. Post one immediate, soundless banner instead.
+     * rings (no double audio). This banner is intentionally passive and
+     * soundless: the iPhone audio loop is the alarm; we do not want iOS to
+     * convert the banner into another Apple Watch ping.
      */
-    private func showSilentBanner() {
+    private func showPassiveBanner() {
         let content = UNMutableNotificationContent()
         content.title = ringTitle ?? "⏰ Alarm"
         content.body = ringBody ?? "Ringing — open the app to stop"
         content.sound = nil
         if #available(iOS 15.0, *) {
-            // more prominent on the lock screen AND on a paired Apple Watch
-            content.interruptionLevel = .timeSensitive
+            content.interruptionLevel = .passive
         }
         let request = UNNotificationRequest(identifier: bannerId, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
@@ -175,19 +229,75 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
+    /**
+     * Mirror the running timers onto the lock screen as Live Activities.
+     * The countdown renders natively (Text(timerInterval:)), so it keeps
+     * ticking while the app is suspended. Called with the full timer list
+     * on every change; ends activities whose timer is gone, updates the
+     * changed ones, starts the new ones.
+     */
+    @objc func syncTimerActivities(_ call: CAPPluginCall) {
+        guard #available(iOS 16.2, *) else {
+            call.resolve()
+            return
+        }
+        let items = (call.getArray("timers") ?? []).compactMap { $0 as? [String: Any] }
+        Task { @MainActor in
+            var wanted: [String: (label: String, hue: Double, total: Double, endAt: Date, paused: Double?)] = [:]
+            for obj in items {
+                guard let id = obj["id"] as? String,
+                      let endAtMs = obj["endAt"] as? Double,
+                      let totalMs = obj["totalMs"] as? Double else { continue }
+                wanted[id] = (
+                    label: obj["label"] as? String ?? "Timer",
+                    hue: obj["hue"] as? Double ?? 210,
+                    total: totalMs / 1000,
+                    endAt: Date(timeIntervalSince1970: endAtMs / 1000),
+                    paused: (obj["pausedRemaining"] as? Double).map { $0 / 1000 }
+                )
+            }
+            for activity in Activity<TimerActivityAttributes>.activities {
+                if let w = wanted.removeValue(forKey: activity.attributes.timerId) {
+                    let state = TimerActivityAttributes.ContentState(endAt: w.endAt, pausedRemaining: w.paused)
+                    await activity.update(ActivityContent(state: state, staleDate: nil))
+                } else {
+                    await activity.end(nil, dismissalPolicy: .immediate)
+                }
+            }
+            for (id, w) in wanted {
+                let attrs = TimerActivityAttributes(timerId: id, label: w.label, hue: w.hue, totalSeconds: w.total)
+                let state = TimerActivityAttributes.ContentState(endAt: w.endAt, pausedRemaining: w.paused)
+                _ = try? Activity.request(
+                    attributes: attrs,
+                    content: ActivityContent(state: state, staleDate: nil),
+                    pushType: nil
+                )
+            }
+            call.resolve()
+        }
+    }
+
     private func playAlarm() {
-        guard play(resource: ringResource) else { return }
-        ensureLoudEnough()
-        showSilentBanner()
-        // the notification chain is only the fallback for a force-quit app;
-        // now that the live loop is ringing, imminent notifications would
-        // just overlap it — drop the ones due in the next 10 minutes
+        isAlarmRinging = true
+        scheduledAtMs = nil
+        // The live phone bell owns this moment. Remove fallback
+        // notifications before starting audio, so a paired Watch cannot
+        // surface them as a small ping while the iPhone is about to ring.
         cancelImminentNotifications()
+        guard play(resource: ringResource) else {
+            isAlarmRinging = false
+            return
+        }
+        ensureLoudEnough()
+        showPassiveBanner()
         // safety cap: after 10 minutes of unanswered ringing, back to keep-alive
         capTimer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now() + maxRingSeconds)
-        t.setEventHandler { [weak self] in self?.playSilence() }
+        t.schedule(deadline: .now() + maxRingSeconds, leeway: .seconds(1))
+        t.setEventHandler { [weak self] in
+            self?.isAlarmRinging = false
+            self?.playSilence()
+        }
         t.resume()
         capTimer = t
     }
@@ -235,8 +345,15 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         ringTimer?.cancel()
         let delay = max(0, atMs / 1000 - Date().timeIntervalSince1970)
+        scheduledAtMs = atMs
+        if delay <= 0.25 {
+            playAlarm()
+            WatchLink.shared.sendAlarm(at: nil, title: nil)
+            call.resolve()
+            return
+        }
         let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now() + delay)
+        t.schedule(deadline: .now() + delay, leeway: .milliseconds(100))
         t.setEventHandler { [weak self] in self?.playAlarm() }
         t.resume()
         ringTimer = t
@@ -248,6 +365,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func cancelRing(_ call: CAPPluginCall) {
         ringTimer?.cancel()
         ringTimer = nil
+        scheduledAtMs = nil
         WatchLink.shared.sendAlarm(at: nil, title: nil)
         call.resolve()
     }
@@ -263,6 +381,8 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func stop(_ call: CAPPluginCall) {
         capTimer?.cancel()
         capTimer = nil
+        isAlarmRinging = false
+        scheduledAtMs = nil
         playSilence()
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [bannerId])
         call.resolve()

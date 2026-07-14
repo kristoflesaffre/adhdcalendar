@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { CalendarInfo, Occurrence, TaskOccurrence } from '../types';
 import { MS_DAY, addDays, endOfDay, fmtTime, isToday, startOfDay, startOfMonth, startOfWeek } from '../lib/dates';
-import { BellFilled } from './icons';
+import { RingingBell } from './icons';
 
 interface Props {
   date: Date;
@@ -124,8 +124,8 @@ export function MonthView({
                       {occ.event.title || '(untitled)'}
                     </span>
                     {occ.event.alarms.length > 0 && !occ.event.allDay && (
-                      <span className="bell-mini" style={{ color, marginLeft: 'auto' }}>
-                        <BellFilled size={9} />
+                      <span className="bell-mini" style={{ marginLeft: 'auto' }}>
+                        <RingingBell size={9} />
                       </span>
                     )}
                   </button>

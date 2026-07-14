@@ -111,7 +111,13 @@ export function GoogleConnectModal({ onClose }: Props) {
         }
         const existing = state.calendars.find((lc) => lc.googleId === entry.id && !lc.icsUrl);
         const calInfo = makeGoogleCalendarInfo(entry, existing);
-        const events = await fetchGoogleEvents(token, entry.id, calInfo.id, state.settings.defaultAlarms);
+        const events = await fetchGoogleEvents(
+          token,
+          entry.id,
+          calInfo.id,
+          state.settings.defaultAlarms,
+          state.settings.defaultNotifications,
+        );
         dispatch({ type: 'calendar/importEvents', calendar: calInfo, events });
         total += events.length;
       }
@@ -147,7 +153,11 @@ export function GoogleConnectModal({ onClose }: Props) {
     setOkMsg('');
     try {
       const text = await fetchIcsText(cleaned);
-      const parsed = parseIcs(text, state.settings.defaultAlarms);
+      const parsed = parseIcs(
+        text,
+        state.settings.defaultAlarms,
+        state.settings.defaultNotifications,
+      );
       const usedColors = new Set(state.calendars.map((c) => c.color));
       const calendar: CalendarInfo = {
         id: `gcal-${uid()}`,
@@ -181,7 +191,11 @@ export function GoogleConnectModal({ onClose }: Props) {
     try {
       if (cal.icsUrl) {
         const text = await fetchIcsText(cal.icsUrl);
-        const parsed = parseIcs(text, state.settings.defaultAlarms);
+        const parsed = parseIcs(
+          text,
+          state.settings.defaultAlarms,
+          state.settings.defaultNotifications,
+        );
         dispatch({
           type: 'calendar/importEvents',
           calendar: { ...cal, syncedAt: Date.now() },
@@ -192,7 +206,13 @@ export function GoogleConnectModal({ onClose }: Props) {
         const token = await getAccessToken(id);
         if (!token) throw new Error(getLastAuthError() ?? 'Google sign-in didn’t complete. Try again.');
         await flushQueue(id, onSynced);
-        const events = await fetchGoogleEvents(token, cal.googleId, cal.id, state.settings.defaultAlarms);
+        const events = await fetchGoogleEvents(
+          token,
+          cal.googleId,
+          cal.id,
+          state.settings.defaultAlarms,
+          state.settings.defaultNotifications,
+        );
         dispatch({ type: 'calendar/importEvents', calendar: { ...cal, syncedAt: Date.now() }, events });
       }
       setOkMsg(`“${cal.name}” is up to date.`);

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { CalendarInfo, Occurrence, TaskOccurrence } from '../types';
 import { MS_DAY, fmtTime, startOfDay } from '../lib/dates';
-import { BellFilled } from './icons';
+import { RingingBell } from './icons';
 
 interface Props {
   occurrences: Occurrence[];
@@ -65,9 +65,9 @@ export function TodayView({ occurrences, tasks, calendars, onEventClick, onToggl
               <button
                 key={occ.key}
                 className="tev-row"
+                style={{ ['--ev' as any]: color }}
                 onClick={(e) => onEventClick(occ, (e.currentTarget as HTMLElement).getBoundingClientRect())}
               >
-                <span className="tev-bar" style={{ background: color }} />
                 {!isAllDay && (
                   <span className="tev-time">
                     {fmtTime(occ.start)}–{fmtTime(occ.end)}
@@ -75,8 +75,8 @@ export function TodayView({ occurrences, tasks, calendars, onEventClick, onToggl
                 )}
                 <span className="tev-title">{occ.event.title || '(untitled)'}</span>
                 {occ.event.alarms.length > 0 && !occ.event.allDay && (
-                  <span style={{ color, flex: 'none' }}>
-                    <BellFilled size={10} />
+                  <span className="tev-bell">
+                    <RingingBell size={10} />
                   </span>
                 )}
               </button>
@@ -105,7 +105,7 @@ export function TodayView({ occurrences, tasks, calendars, onEventClick, onToggl
                 <span className="task-row-meta">
                   {occ.task.hasTime && <span className="task-time">{fmtTime(occ.due)}</span>}
                   {occ.task.recurrence && <span aria-label="repeats">↻</span>}
-                  {occ.task.alarms.length > 0 && occ.task.hasTime && <BellFilled size={10} />}
+                  {occ.task.alarms.length > 0 && occ.task.hasTime && <RingingBell size={10} />}
                   <span className="task-list-name" style={{ color }}>
                     {cal?.name}
                   </span>

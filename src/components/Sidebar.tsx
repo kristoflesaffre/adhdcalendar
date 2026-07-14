@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CalendarInfo } from '../types';
+import type { RefObject } from 'react';
+import type { CalendarInfo, Occurrence } from '../types';
 import { useStore, uid } from '../state/store';
 import { parseIcs } from '../lib/ics';
 import { EVENT_PALETTE } from '../types';
 import { flushQueue, getSyncStatus, subscribeSync } from '../lib/googleSync';
 import type { SyncPhase } from '../lib/googleSync';
+import { fmtDay, fmtTime } from '../lib/dates';
+import { useEventSearch } from '../hooks/useEventSearch';
 import { MiniMonth } from './MiniMonth';
-import { BellFilled, GoogleG, Pencil, Plus, Upload } from './icons';
+import { GoogleG, Pencil, Plus, SearchIcon, Upload } from './icons';
 
 function SyncPill() {
   const { state, dispatch } = useStore();
@@ -43,16 +46,104 @@ interface Props {
   onCreate: () => void;
   onEditCalendar: (cal: CalendarInfo | null) => void;
   onOpenGoogle: () => void;
+  onOpenOccurrence?: (occ: Occurrence) => void;
   busyDays: Set<string>;
+  searchRef?: RefObject<HTMLInputElement>;
 }
 
-export function Sidebar({ selected, onSelectDate, onCreate, onEditCalendar, onOpenGoogle, busyDays }: Props) {
+function SidebarSearch({
+  onOpenOccurrence,
+  searchRef,
+}: {
+  onOpenOccurrence: (occ: Occurrence) => void;
+  searchRef: RefObject<HTMLInputElement>;
+}) {
+  const { state } = useStore();
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const hits = useEventSearch(state.events, query);
+  const calById = new Map(state.calendars.map((c) => [c.id, c]));
+
+  useEffect(() => {
+    if (!open) return;
+    const onOutsideClick = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('click', onOutsideClick);
+    return () => window.removeEventListener('click', onOutsideClick);
+  }, [open]);
+
+  return (
+    <div className="search sidebar-search" ref={wrapRef}>
+      <SearchIcon size={14} />
+      <input
+        ref={searchRef}
+        placeholder="Search events"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setOpen(false);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      {open && query.trim().length >= 2 && (
+        <div className="search-results">
+          {hits.length === 0 && <div className="search-empty">No events match “{query.trim()}”</div>}
+          {hits.map((occ) => {
+            const cal = calById.get(occ.event.calendarId);
+            return (
+              <button
+                key={occ.key}
+                className="search-hit"
+                onClick={() => {
+                  setOpen(false);
+                  onOpenOccurrence(occ);
+                }}
+              >
+                <span className="dot" style={{ background: occ.event.color ?? cal?.color }} />
+                <span style={{ minWidth: 0 }}>
+                  <div className="search-hit-title">{occ.event.title || '(untitled)'}</div>
+                  <div className="search-hit-when">
+                    {fmtDay(occ.start)}
+                    {occ.event.allDay ? '' : ` · ${fmtTime(occ.start)}`}
+                  </div>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Sidebar({
+  selected,
+  onSelectDate,
+  onCreate,
+  onEditCalendar,
+  onOpenGoogle,
+  onOpenOccurrence,
+  busyDays,
+  searchRef,
+}: Props) {
   const { state, dispatch } = useStore();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const importIcs = async (file: File) => {
     const text = await file.text();
-    const parsed = parseIcs(text, state.settings.defaultAlarms);
+    const parsed = parseIcs(
+      text,
+      state.settings.defaultAlarms,
+      state.settings.defaultNotifications,
+    );
     const calId = `ics-${uid()}`;
     const usedColors = new Set(state.calendars.map((c) => c.color));
     const color =
@@ -73,6 +164,10 @@ export function Sidebar({ selected, onSelectDate, onCreate, onEditCalendar, onOp
 
   return (
     <aside className="sidebar">
+      {onOpenOccurrence && searchRef && (
+        <SidebarSearch onOpenOccurrence={onOpenOccurrence} searchRef={searchRef} />
+      )}
+
       <button className="btn create-btn" onClick={onCreate}>
         <Plus size={15} />
         New event
@@ -106,11 +201,12 @@ export function Sidebar({ selected, onSelectDate, onCreate, onEditCalendar, onOp
                 </span>
               )}
               <button
-                className="icon-btn cal-item-edit"
+                className="cal-edit-btn"
                 aria-label={`Edit ${cal.name}`}
+                title={`Edit ${cal.name}`}
                 onClick={() => onEditCalendar(cal)}
               >
-                <Pencil size={13} />
+                <Pencil size={12} />
               </button>
             </li>
           ))}

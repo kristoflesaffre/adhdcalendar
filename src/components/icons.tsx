@@ -70,9 +70,30 @@ export const Bell = (p: IconProps) => (
   </S>
 );
 
-export const BellFilled = ({ size = 12 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M12 2a1.5 1.5 0 0 0-1.5 1.5v.6A6.5 6.5 0 0 0 5.5 10.5v4.8l-1.7 2.5c-.45.67.03 1.57.83 1.57h14.74c.8 0 1.28-.9.83-1.57l-1.7-2.5v-4.8a6.5 6.5 0 0 0-5-6.4v-.6A1.5 1.5 0 0 0 12 2zm-2.3 19.4a2.3 2.3 0 0 0 4.6 0z" />
+export const RingingBell = (p: IconProps) => (
+  <S {...p}>
+    <path d="M18 10a6 6 0 0 0-12 0c0 5.8-2.6 7.8-2.6 7.8h17.2S18 15.8 18 10" />
+    <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    <path d="M6.1 4.8A7.4 7.4 0 0 0 3.7 8M17.9 4.8A7.4 7.4 0 0 1 20.3 8" />
+    <path d="M4.4 2.2A10.5 10.5 0 0 0 1.3 6.1M19.6 2.2a10.5 10.5 0 0 1 3.1 3.9" />
+  </S>
+);
+
+export const ReminderIcon = ({ size = 16 }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="2.5" y="4.5" width="14" height="14" rx="2" />
+    <path d="M6 2.5v4M13 2.5v4M2.5 8.5h14" />
+    <path d="M20.2 16.2a3.2 3.2 0 0 0-6.4 0v2.4c0 1.5-1.2 2.4-1.2 2.4h8.8s-1.2-.9-1.2-2.4v-2.4M18.1 23a1.2 1.2 0 0 1-2.2 0" />
   </svg>
 );
 
@@ -137,6 +158,20 @@ export const Upload = (p: IconProps) => (
   </S>
 );
 
+export const Camera = (p: IconProps) => (
+  <S {...p}>
+    <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" />
+    <circle cx="12" cy="13" r="4" />
+  </S>
+);
+
+export const TaskIcon = (p: IconProps) => (
+  <S {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M8 12.5l2.5 2.5L16.5 9" />
+  </S>
+);
+
 export const Palette = (p: IconProps) => (
   <S {...p}>
     <circle cx="12" cy="12" r="9" />
@@ -184,6 +219,39 @@ export const ViewMonth = (p: IconProps) => (
   <S {...p}>
     <rect x="4" y="4" width="16" height="16" rx="2" />
     <path d="M4 10h16M4 15h16M9.3 10v10M14.6 10v10" />
+  </S>
+);
+
+/* iOS Clock-style tab glyphs: the classic alarm clock (bells + feet) and
+   the timer dial (tick ring + hand), redrawn to match the app's line style */
+
+export const AlarmClockIcon = (p: IconProps) => (
+  <S {...p}>
+    <circle cx="12" cy="13" r="7.5" />
+    <path d="M12 9.4V13l2.6 2.1" />
+    <path d="M7.2 3 3.4 6.1M16.8 3l3.8 3.1" />
+    <path d="M6.6 19.6 5.2 21.4M17.4 19.6l1.4 1.8" />
+  </S>
+);
+
+export const TimerIcon = (p: IconProps) => (
+  <S {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 12l3.4-3.9" />
+    <path d="M12 3.5v1.9M12 18.6v1.9M20.5 12h-1.9M5.4 12H3.5" />
+    <path d="M18 6l-1.3 1.3M6 18l1.3-1.3M18 18l-1.3-1.3M6 6l1.3 1.3" />
+  </S>
+);
+
+export const PauseIcon = (p: IconProps) => (
+  <S {...p}>
+    <path d="M9 5v14M15 5v14" />
+  </S>
+);
+
+export const PlayIcon = (p: IconProps) => (
+  <S {...p}>
+    <path d="M7 4.8v14.4L19 12 7 4.8z" />
   </S>
 );
 

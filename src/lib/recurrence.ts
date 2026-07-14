@@ -149,6 +149,7 @@ export function expandTasks(
       allDay: !task.hasTime,
       recurrence: task.recurrence,
       exceptions: task.exceptions,
+      notifications: task.notifications,
       alarms: task.alarms,
     } as EventItem;
     for (const occ of expandEvent(pseudo, rangeStart, rangeEnd)) {

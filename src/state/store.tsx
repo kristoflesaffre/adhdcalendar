@@ -1,10 +1,20 @@
-import { createContext, useContext, useEffect, useMemo, useReducer } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, CalendarInfo, EventItem, Settings, TaskItem } from '../types';
+import type { ActiveTimer, AlarmClockItem, AppState, CalendarInfo, EventItem, Settings, TaskItem } from '../types';
 import { MS_HOUR, addDays, setMinutesOfDay, startOfDay } from '../lib/dates';
 import { DEFAULT_ALARM_SOUND, getAlarmSound } from '../alarm/sounds';
+import { db } from '../lib/instant';
+import {
+  appStateFromRecords,
+  hasCloudState,
+  initializeCloudState,
+  queueCloudStateDiff,
+} from './instantSync';
+import type { SyncRecord } from './instantSync';
+import { SyncLoading, SyncLogin } from '../components/SyncLogin';
 
 const STORAGE_KEY = 'carillon.v1';
+const MIGRATION_OWNER_KEY = 'carillon.instant.owner.v1';
 
 export function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -14,7 +24,8 @@ const defaultSettings: Settings = {
   theme: 'system',
   googleClientId: '',
   alarmSound: DEFAULT_ALARM_SOUND,
-  defaultAlarms: [10],
+  defaultNotifications: [10080, 1440],
+  defaultAlarms: [5],
   weekStartsOn: 1,
 };
 
@@ -22,14 +33,14 @@ function seedState(): AppState {
   const personal: CalendarInfo = {
     id: 'cal-personal',
     name: 'Personal',
-    color: '#206657',
+    color: '#2f8f6f',
     visible: true,
     source: 'local',
   };
   const work: CalendarInfo = {
     id: 'cal-work',
     name: 'Work',
-    color: '#3a5bc7',
+    color: '#2f64c8',
     visible: true,
     source: 'local',
   };
@@ -42,7 +53,8 @@ function seedState(): AppState {
       start: setMinutesOfDay(addDays(today, 1), 9 * 60 + 30).getTime(),
       end: setMinutesOfDay(addDays(today, 1), 10 * 60 + 15).getTime(),
       allDay: false,
-      alarms: [30, 10],
+      notifications: [10080, 1440],
+      alarms: [5],
       recurrence: { freq: 'WEEKLY', interval: 1 },
     },
     {
@@ -53,7 +65,8 @@ function seedState(): AppState {
       start: setMinutesOfDay(today, 18 * 60 + 30).getTime(),
       end: setMinutesOfDay(today, 19 * 60 + 15).getTime(),
       allDay: false,
-      alarms: [30, 20, 10],
+      notifications: [10080, 1440],
+      alarms: [5],
     },
     {
       id: uid(),
@@ -63,24 +76,61 @@ function seedState(): AppState {
       start: setMinutesOfDay(addDays(today, 3), 14 * 60).getTime(),
       end: setMinutesOfDay(addDays(today, 3), 14 * 60 + 45).getTime(),
       allDay: false,
-      alarms: [60, 10],
+      notifications: [10080, 1440],
+      alarms: [5],
     },
   ];
-  return { calendars: [personal, work], events, tasks: [], settings: defaultSettings };
+  return {
+    calendars: [personal, work],
+    events,
+    tasks: [],
+    alarmClocks: [],
+    timers: [],
+    settings: defaultSettings,
+  };
+}
+
+function normalizeState(parsed: AppState): AppState {
+  const isLegacyReminderModel = !Array.isArray(parsed.settings?.defaultNotifications);
+  const settings = {
+    ...defaultSettings,
+    ...parsed.settings,
+    ...(isLegacyReminderModel
+      ? { defaultNotifications: [...defaultSettings.defaultNotifications], defaultAlarms: [5] }
+      : {}),
+  };
+  const calendarById = new Map((parsed.calendars ?? []).map((calendar) => [calendar.id, calendar]));
+  const events = (parsed.events ?? []).map((event) => {
+    if (Array.isArray(event.notifications)) return event;
+    const source = calendarById.get(event.calendarId)?.source;
+    const imported = source === 'google' || source === 'ics';
+    return {
+      ...event,
+      notifications: imported ? [...(event.alarms ?? [])] : [...defaultSettings.defaultNotifications],
+      alarms: imported ? [5] : [...(event.alarms ?? [5])],
+    };
+  });
+  const tasks = (parsed.tasks ?? []).map((task) => ({
+    ...task,
+    notifications: Array.isArray(task.notifications)
+      ? task.notifications
+      : [...defaultSettings.defaultNotifications],
+    alarms: Array.isArray(task.alarms) ? task.alarms : [5],
+  }));
+  return {
+    calendars: parsed.calendars ?? [],
+    events,
+    tasks,
+    alarmClocks: parsed.alarmClocks ?? [],
+    timers: parsed.timers ?? [],
+    settings: { ...settings, alarmSound: getAlarmSound(settings.alarmSound).id },
+  };
 }
 
 function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedState();
-    const parsed = JSON.parse(raw) as AppState;
-    const settings = { ...defaultSettings, ...parsed.settings };
-    return {
-      calendars: parsed.calendars ?? [],
-      events: parsed.events ?? [],
-      tasks: parsed.tasks ?? [],
-      settings: { ...settings, alarmSound: getAlarmSound(settings.alarmSound).id },
-    };
+    return raw ? normalizeState(JSON.parse(raw) as AppState) : seedState();
   } catch {
     return seedState();
   }
@@ -102,6 +152,14 @@ export type Action =
   | { type: 'calendar/delete'; id: string }
   | { type: 'calendar/toggle'; id: string }
   | { type: 'calendar/importEvents'; calendar: CalendarInfo; events: EventItem[] }
+  | { type: 'alarm/add'; alarm: AlarmClockItem }
+  | { type: 'alarm/update'; alarm: AlarmClockItem }
+  | { type: 'alarm/delete'; id: string }
+  | { type: 'alarm/setEnabled'; id: string; enabled: boolean; anchor?: number }
+  | { type: 'timer/start'; timer: ActiveTimer }
+  | { type: 'timer/cancel'; id: string }
+  | { type: 'timer/pause'; id: string; remaining: number }
+  | { type: 'timer/resume'; id: string; endAt: number }
   | { type: 'settings/update'; patch: Partial<Settings> };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -178,15 +236,59 @@ function reducer(state: AppState, action: Action): AppState {
     case 'calendar/importEvents': {
       // replace any previous import of the same calendar (re-sync)
       const existing = state.calendars.find((c) => c.id === action.calendar.id);
+      const previousGoogleEvents = new Map(
+        state.events
+          .filter((event) => event.calendarId === action.calendar.id && event.googleEventId)
+          .map((event) => [event.googleEventId!, event]),
+      );
       const calendars = existing
         ? state.calendars.map((c) => (c.id === action.calendar.id ? action.calendar : c))
         : [...state.calendars, action.calendar];
       const events = [
         ...state.events.filter((e) => e.calendarId !== action.calendar.id),
-        ...action.events,
+        ...action.events.map((event) => {
+          const previous = event.googleEventId ? previousGoogleEvents.get(event.googleEventId) : undefined;
+          return previous ? { ...event, alarms: previous.alarms } : event;
+        }),
       ];
       return { ...state, calendars, events };
     }
+    case 'alarm/add':
+      return { ...state, alarmClocks: [...state.alarmClocks, action.alarm] };
+    case 'alarm/update':
+      return {
+        ...state,
+        alarmClocks: state.alarmClocks.map((a) => (a.id === action.alarm.id ? action.alarm : a)),
+      };
+    case 'alarm/delete':
+      return { ...state, alarmClocks: state.alarmClocks.filter((a) => a.id !== action.id) };
+    case 'alarm/setEnabled':
+      return {
+        ...state,
+        alarmClocks: state.alarmClocks.map((a) =>
+          a.id === action.id
+            ? { ...a, enabled: action.enabled, anchor: action.anchor ?? a.anchor }
+            : a,
+        ),
+      };
+    case 'timer/start':
+      return { ...state, timers: [...state.timers, action.timer] };
+    case 'timer/cancel':
+      return { ...state, timers: state.timers.filter((t) => t.id !== action.id) };
+    case 'timer/pause':
+      return {
+        ...state,
+        timers: state.timers.map((t) =>
+          t.id === action.id ? { ...t, pausedRemaining: action.remaining } : t,
+        ),
+      };
+    case 'timer/resume':
+      return {
+        ...state,
+        timers: state.timers.map((t) =>
+          t.id === action.id ? { ...t, pausedRemaining: undefined, endAt: action.endAt } : t,
+        ),
+      };
     case 'settings/update':
       return { ...state, settings: { ...state.settings, ...action.patch } };
     default:
@@ -197,12 +299,113 @@ function reducer(state: AppState, action: Action): AppState {
 interface StoreValue {
   state: AppState;
   dispatch: React.Dispatch<Action>;
+  sync: {
+    email: string;
+    status: 'synced' | 'syncing' | 'error';
+    error?: string;
+  };
 }
 
 const StoreContext = createContext<StoreValue | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, load);
+  const auth = db.useAuth();
+  const user = auth.user;
+  const cloud = db.useQuery(
+    user
+      ? {
+          syncRecords: {
+            $: { where: { ownerId: user.id } },
+          },
+        }
+      : null,
+  );
+  const [state, setState] = useState<AppState>(load);
+  const stateRef = useRef(state);
+  const userIdRef = useRef('');
+  const syncReadyRef = useRef(false);
+  const initializingRef = useRef(false);
+  const pendingSyncRef = useRef(0);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [initializing, setInitializing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
+  const [syncError, setSyncError] = useState('');
+
+  useEffect(() => {
+    userIdRef.current = user?.id ?? '';
+    syncReadyRef.current = false;
+    initializingRef.current = false;
+    pendingSyncRef.current = 0;
+    setCloudReady(false);
+    setInitializing(false);
+    setSyncError('');
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || cloud.isLoading || cloud.error) return;
+    const records = (cloud.data?.syncRecords ?? []) as SyncRecord[];
+
+    if (!hasCloudState(records)) {
+      if (initializingRef.current) return;
+      initializingRef.current = true;
+      setInitializing(true);
+      const migrationOwner = localStorage.getItem(MIGRATION_OWNER_KEY);
+      const migrationState = !migrationOwner || migrationOwner === user.id ? stateRef.current : seedState();
+      void initializeCloudState(migrationState, user.id)
+        .then(() => {
+          localStorage.setItem(MIGRATION_OWNER_KEY, user.id);
+          setSyncStatus('synced');
+        })
+        .catch((error) => {
+          initializingRef.current = false;
+          setInitializing(false);
+          setSyncStatus('error');
+          setSyncError(error instanceof Error ? error.message : 'Could not upload local calendar data.');
+        });
+      return;
+    }
+
+    if (pendingSyncRef.current > 0) return;
+
+    const next = normalizeState(appStateFromRecords(records, stateRef.current));
+    if (JSON.stringify(next) !== JSON.stringify(stateRef.current)) {
+      stateRef.current = next;
+      setState(next);
+    }
+    syncReadyRef.current = true;
+    initializingRef.current = false;
+    setInitializing(false);
+    setCloudReady(true);
+    setSyncStatus('synced');
+    setSyncError('');
+  }, [cloud.data, cloud.error, cloud.isLoading, syncStatus, user]);
+
+  const dispatch = useCallback((action: Action) => {
+    const previous = stateRef.current;
+    const next = reducer(previous, action);
+    stateRef.current = next;
+    setState(next);
+
+    const ownerId = userIdRef.current;
+    if (!ownerId || !syncReadyRef.current) return;
+    pendingSyncRef.current += 1;
+    setSyncStatus('syncing');
+    setSyncError('');
+    queueCloudStateDiff(
+      previous,
+      next,
+      ownerId,
+      () => {
+        pendingSyncRef.current = Math.max(0, pendingSyncRef.current - 1);
+        if (pendingSyncRef.current === 0) setSyncStatus('synced');
+      },
+      (error) => {
+        pendingSyncRef.current = Math.max(0, pendingSyncRef.current - 1);
+        setSyncStatus('error');
+        setSyncError(error instanceof Error ? error.message : 'Cloud sync failed.');
+      },
+    );
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -215,7 +418,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t);
   }, [state]);
 
-  const value = useMemo(() => ({ state, dispatch }), [state]);
+  const value = useMemo(
+    () => ({
+      state,
+      dispatch,
+      sync: {
+        email: user?.email ?? '',
+        status: syncStatus,
+        ...(syncError ? { error: syncError } : {}),
+      },
+    }),
+    [dispatch, state, syncError, syncStatus, user?.email],
+  );
+
+  if (auth.isLoading) return <SyncLoading />;
+  if (!user) return <SyncLogin initialError={auth.error?.message ?? ''} />;
+  if (cloud.error) return <SyncLoading error={cloud.error.message} />;
+  if (cloud.isLoading || !cloudReady) {
+    return <SyncLoading label={initializing ? 'Moving your calendar to the cloud…' : undefined} />;
+  }
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
@@ -226,7 +447,12 @@ export function useStore(): StoreValue {
 }
 
 /** default new event: next full half hour, 1h long */
-export function draftEvent(calendarId: string, defaultAlarms: number[], at?: number): EventItem {
+export function draftEvent(
+  calendarId: string,
+  defaultNotifications: number[],
+  defaultAlarms: number[],
+  at?: number,
+): EventItem {
   const base = at ?? Date.now();
   const d = new Date(base);
   if (at == null) {
@@ -239,6 +465,7 @@ export function draftEvent(calendarId: string, defaultAlarms: number[], at?: num
     start: d.getTime(),
     end: d.getTime() + MS_HOUR,
     allDay: false,
+    notifications: [...defaultNotifications],
     alarms: [...defaultAlarms],
   };
 }

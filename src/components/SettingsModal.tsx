@@ -11,7 +11,8 @@ import { armTestRing } from '../native/alarmAudio';
 import type { NotificationPermState } from '../native/alarms';
 import type { ThemePref } from '../types';
 import { ALARM_SOUNDS, getAlarmSound } from '../alarm/sounds';
-import { BellFilled, Close, GoogleG } from './icons';
+import { db } from '../lib/instant';
+import { Close, GoogleG, ReminderIcon, RingingBell } from './icons';
 
 function isNative(): boolean {
   return !!(window as any).Capacitor?.isNativePlatform?.();
@@ -22,10 +23,11 @@ interface Props {
   onOpenGoogle: () => void;
 }
 
-const DEFAULT_ALARM_CHOICES = [5, 10, 15, 20, 30, 60];
+const DEFAULT_NOTIFICATION_CHOICES = [60, 1440, 10080];
+const DEFAULT_ALARM_CHOICES = [0, 5, 10, 15];
 
 export function SettingsModal({ onClose, onOpenGoogle }: Props) {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, sync } = useStore();
   const { settings } = state;
   const alarmSound = getAlarmSound(settings.alarmSound);
   const [notifState, setNotifState] = useState(
@@ -53,6 +55,12 @@ export function SettingsModal({ onClose, onOpenGoogle }: Props) {
     const cur = settings.defaultAlarms;
     const next = cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].sort((a, b) => b - a);
     dispatch({ type: 'settings/update', patch: { defaultAlarms: next } });
+  };
+
+  const toggleDefaultNotification = (m: number) => {
+    const cur = settings.defaultNotifications;
+    const next = cur.includes(m) ? cur.filter((x) => x !== m) : [...cur, m].sort((a, b) => b - a);
+    dispatch({ type: 'settings/update', patch: { defaultNotifications: next } });
   };
 
   const setAlarmSound = (id: string) => {
@@ -92,13 +100,54 @@ export function SettingsModal({ onClose, onOpenGoogle }: Props) {
             </div>
           </div>
 
+          <div className="settings-section cloud-sync-section">
+            <h3>Cloud sync</h3>
+            <div className="cloud-sync-account">
+              <span className={`cloud-sync-dot is-${sync.status}`} aria-hidden="true" />
+              <span className="cloud-sync-copy">
+                <strong>{sync.status === 'syncing' ? 'Syncing…' : sync.status === 'error' ? 'Sync issue' : 'Up to date'}</strong>
+                <small>{sync.email}</small>
+              </span>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  onClose();
+                  void db.auth.signOut();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+            {sync.error && <p className="error-text">{sync.error}</p>}
+          </div>
+
           <div className="settings-section">
             <h3>
-              <BellFilled size={12} /> Alarms
+              <ReminderIcon size={16} /> Notifications
             </h3>
             <p className="settings-hint">
-              Default alarms are pre-selected on every new event. Alarms ring in this tab with sound —
-              keep the app open (or install the iOS app) for alarms to fire.
+              New events get a push notification with a short sound at the selected times.
+            </p>
+            <div className="alarm-chips">
+              {DEFAULT_NOTIFICATION_CHOICES.map((m) => (
+                <button
+                  key={m}
+                  className="chip-btn"
+                  aria-pressed={settings.defaultNotifications.includes(m)}
+                  onClick={() => toggleDefaultNotification(m)}
+                >
+                  {fmtOffset(m)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3>
+              <RingingBell size={15} /> Alarms
+            </h3>
+            <p className="settings-hint">
+              New events get a separate alarm. It keeps ringing until you stop it.
             </p>
             <div className="alarm-chips">
               {DEFAULT_ALARM_CHOICES.map((m) => (

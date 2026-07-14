@@ -17,6 +17,16 @@ interface AlarmAudioPlugin {
   cancelRing(): Promise<void>;
   ring(options?: { sound?: string }): Promise<void>;
   stop(): Promise<void>;
+  syncTimerActivities(options: { timers: TimerActivityLike[] }): Promise<void>;
+}
+
+interface TimerActivityLike {
+  id: string;
+  label: string;
+  endAt: number;
+  totalMs: number;
+  pausedRemaining?: number;
+  hue?: number;
 }
 
 const AlarmAudio = registerPlugin<AlarmAudioPlugin>('AlarmAudio');
@@ -64,6 +74,33 @@ export async function armNativeRing(
     else await AlarmAudio.scheduleRing({ at: atMs, title, body, sound });
   } catch {
     // ignore — fallback paths still apply
+  }
+}
+
+let lastActivitySync = '';
+
+/**
+ * Mirror the running timers to iOS lock-screen Live Activities. Called on
+ * every timers change; the native side reconciles (start/update/end), and
+ * the countdown itself renders natively so it ticks with the app asleep.
+ */
+export async function syncTimerLiveActivities(timers: TimerActivityLike[]): Promise<void> {
+  if (!isNative()) return;
+  const payload = timers.map((t) => ({
+    id: t.id,
+    label: t.label,
+    endAt: t.endAt,
+    totalMs: t.totalMs,
+    pausedRemaining: t.pausedRemaining,
+    hue: t.hue,
+  }));
+  const key = JSON.stringify(payload);
+  if (key === lastActivitySync) return;
+  lastActivitySync = key;
+  try {
+    await AlarmAudio.syncTimerActivities({ timers: payload });
+  } catch {
+    // plugin without this method (old build) — ignore
   }
 }
 

@@ -29,10 +29,18 @@ export function MiniMonth({ selected, onSelect, weekStartsOn, busyDays }: Props)
       <div className="mini-head">
         <span className="mini-title">{fmtMonth(cursor)}</span>
         <span>
-          <button className="icon-btn" aria-label="Previous month" onClick={() => setCursor(addMonths(cursor, -1))}>
+          <button
+            className="icon-btn gradient-icon-btn"
+            aria-label="Previous month"
+            onClick={() => setCursor(addMonths(cursor, -1))}
+          >
             <ChevronLeft size={14} />
           </button>
-          <button className="icon-btn" aria-label="Next month" onClick={() => setCursor(addMonths(cursor, 1))}>
+          <button
+            className="icon-btn gradient-icon-btn"
+            aria-label="Next month"
+            onClick={() => setCursor(addMonths(cursor, 1))}
+          >
             <ChevronRight size={14} />
           </button>
         </span>
