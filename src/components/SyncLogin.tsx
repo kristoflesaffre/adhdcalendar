@@ -123,9 +123,11 @@ export function SyncLogin({ initialError = '' }: { initialError?: string }) {
 export function SyncLoading({
   label = 'Loading your calendar…',
   error = '',
+  onRetry,
 }: {
   label?: string;
   error?: string;
+  onRetry?: () => void;
 }) {
   return (
     <main className="sync-auth-page">
@@ -140,9 +142,16 @@ export function SyncLoading({
           <>
             <h1>Sync unavailable</h1>
             <p className="error-text">{error}</p>
-            <button className="btn btn-ghost" onClick={() => db.auth.signOut()}>
-              Sign out
-            </button>
+            <div className="sync-error-actions">
+              {onRetry && (
+                <button className="btn sync-auth-primary" onClick={onRetry}>
+                  Try again
+                </button>
+              )}
+              <button className="btn btn-ghost" onClick={() => db.auth.signOut()}>
+                Sign out
+              </button>
+            </div>
           </>
         ) : (
           <>

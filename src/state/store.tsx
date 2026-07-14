@@ -330,6 +330,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
   const [syncError, setSyncError] = useState('');
+  const [initializationError, setInitializationError] = useState('');
 
   useEffect(() => {
     userIdRef.current = user?.id ?? '';
@@ -339,16 +340,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCloudReady(false);
     setInitializing(false);
     setSyncError('');
+    setInitializationError('');
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user || cloud.isLoading || cloud.error) return;
+    if (!user || cloud.isLoading || cloud.error || initializationError) return;
     const records = (cloud.data?.syncRecords ?? []) as SyncRecord[];
 
     if (!hasCloudState(records)) {
       if (initializingRef.current) return;
       initializingRef.current = true;
       setInitializing(true);
+      setInitializationError('');
       const migrationOwner = localStorage.getItem(MIGRATION_OWNER_KEY);
       const migrationState = !migrationOwner || migrationOwner === user.id ? stateRef.current : seedState();
       void initializeCloudState(migrationState, user.id)
@@ -360,7 +363,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           initializingRef.current = false;
           setInitializing(false);
           setSyncStatus('error');
-          setSyncError(error instanceof Error ? error.message : 'Could not upload local calendar data.');
+          const message = error instanceof Error ? error.message : 'Could not upload local calendar data.';
+          setSyncError(message);
+          setInitializationError(message);
         });
       return;
     }
@@ -378,7 +383,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCloudReady(true);
     setSyncStatus('synced');
     setSyncError('');
-  }, [cloud.data, cloud.error, cloud.isLoading, syncStatus, user]);
+    setInitializationError('');
+  }, [cloud.data, cloud.error, cloud.isLoading, initializationError, syncStatus, user]);
 
   const dispatch = useCallback((action: Action) => {
     const previous = stateRef.current;
@@ -435,7 +441,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   if (!user) return <SyncLogin initialError={auth.error?.message ?? ''} />;
   if (cloud.error) return <SyncLoading error={cloud.error.message} />;
   if (cloud.isLoading || !cloudReady) {
-    return <SyncLoading label={initializing ? 'Moving your calendar to the cloud…' : undefined} />;
+    return (
+      <SyncLoading
+        label={initializing ? 'Moving your calendar to the cloud…' : undefined}
+        error={initializationError}
+        onRetry={
+          initializationError
+            ? () => {
+                initializingRef.current = false;
+                setSyncStatus('syncing');
+                setInitializationError('');
+              }
+            : undefined
+        }
+      />
+    );
   }
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

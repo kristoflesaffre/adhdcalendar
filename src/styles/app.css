@@ -274,6 +274,13 @@ textarea {
   text-align: center;
 }
 
+.sync-error-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .sync-spinner {
   width: 26px;
   height: 26px;
