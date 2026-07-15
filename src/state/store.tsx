@@ -342,6 +342,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [syncError, setSyncError] = useState('');
   const [initializationError, setInitializationError] = useState('');
 
+  const finishCloudInitialization = useCallback((nextState: AppState, ownerId: string) => {
+    // An auth change may finish an older transaction after another account
+    // signed in. Never expose or mark that stale account as ready.
+    if (userIdRef.current !== ownerId) return;
+    localStorage.setItem(MIGRATION_OWNER_KEY, ownerId);
+    hadPersistedLocalStateRef.current = false;
+    stateRef.current = nextState;
+    setState(nextState);
+    syncReadyRef.current = true;
+    initializingRef.current = false;
+    setInitializing(false);
+    setCloudReady(true);
+    setSyncStatus('synced');
+    setSyncError('');
+    setInitializationError('');
+  }, []);
+
   useEffect(() => {
     userIdRef.current = user?.id ?? '';
     syncReadyRef.current = false;
@@ -367,8 +384,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const migrationState = !migrationOwner || migrationOwner === user.id ? stateRef.current : seedState();
       void initializeCloudState(migrationState, user.id)
         .then(() => {
-          localStorage.setItem(MIGRATION_OWNER_KEY, user.id);
-          setSyncStatus('synced');
+          // The transaction itself is authoritative. On iOS the live query
+          // can miss its immediate post-auth refresh until the next launch.
+          finishCloudInitialization(migrationState, user.id);
         })
         .catch((error) => {
           initializingRef.current = false;
@@ -393,11 +411,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const mergedState = normalizeState(mergeUnsyncedLocalState(cloudState, stateRef.current));
       void initializeCloudState(mergedState, user.id)
         .then(() => {
-          localStorage.setItem(MIGRATION_OWNER_KEY, user.id);
-          hadPersistedLocalStateRef.current = false;
-          stateRef.current = mergedState;
-          setState(mergedState);
-          setSyncStatus('synced');
+          finishCloudInitialization(mergedState, user.id);
         })
         .catch((error) => {
           initializingRef.current = false;
@@ -423,7 +437,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setSyncStatus('synced');
     setSyncError('');
     setInitializationError('');
-  }, [cloud.data, cloud.error, cloud.isLoading, initializationError, syncStatus, user]);
+  }, [
+    cloud.data,
+    cloud.error,
+    cloud.isLoading,
+    finishCloudInitialization,
+    initializationError,
+    syncStatus,
+    user,
+  ]);
 
   const dispatch = useCallback((action: Action) => {
     const previous = stateRef.current;
