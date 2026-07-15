@@ -1,19 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Recurrence, TaskItem } from '../types';
-import { MS_HOUR, startOfDay, toLocalDateValue } from '../lib/dates';
+import { MS_HOUR, startOfDay } from '../lib/dates';
 import { useStore } from '../state/store';
 import { ensureAudioUnlocked } from '../alarm/sound';
-import {
-  CalIcon,
-  Camera,
-  ChevronDown,
-  Clock,
-  Close,
-  Notes,
-  ReminderIcon,
-  Repeat,
-  RingingBell,
-} from './icons';
+import { MiniMonth } from './MiniMonth';
+import { ClockWheel } from './TimeWheel';
+import { Camera, ChevronRight, Clock, Close, Notes, ReminderIcon, Repeat, RingingBell } from './icons';
+
+/**
+ * Task editor in the same Claude Design language as EventSheet
+ * ("ADHD Calendar - New Event.dc.html"): pill Save button, title row with a
+ * calendar-colour dot, segmented Event/Task control, grouped inset cards,
+ * and the highlighted Alarm card with a chip swimlane.
+ */
 
 interface Props {
   draft: TaskItem;
@@ -25,9 +24,18 @@ interface Props {
 }
 
 const NOTIFICATION_CHOICES = [0, 10, 30, 60, 1440, 10080];
-const ALARM_CHOICES = [0, 5, 10, 15];
+const ALARM_CHIP_CHOICES = [0, 5, 10, 15, 30, 60];
 
 type RecChoice = 'none' | 'DAILY' | 'WEEKDAYS' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+
+const REC_LABELS: Record<RecChoice, string> = {
+  none: 'Never',
+  DAILY: 'Daily',
+  WEEKDAYS: 'Weekdays',
+  WEEKLY: 'Weekly',
+  MONTHLY: 'Monthly',
+  YEARLY: 'Yearly',
+};
 
 function recToChoice(r?: Recurrence): RecChoice {
   if (!r) return 'none';
@@ -57,12 +65,22 @@ function timeValue(t: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+const fmtRowDate = (t: number) =>
+  new Date(t).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+
 function notificationLabel(minutes: number): string {
   if (minutes === 0) return 'At time of task';
   if (minutes % 10080 === 0) return `${minutes / 10080} week${minutes > 10080 ? 's' : ''} before`;
   if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes > 1440 ? 's' : ''} before`;
   if (minutes % 60 === 0) return `${minutes / 60} hour${minutes > 60 ? 's' : ''} before`;
   return `${minutes} minutes before`;
+}
+
+/** Short chip label for the alarm swimlane: "At start", "5 min", "1 hour" */
+function alarmChipLabel(m: number): string {
+  if (m === 0) return 'At start';
+  if (m % 60 === 0) return m === 60 ? '1 hour' : `${m / 60} hours`;
+  return `${m} min`;
 }
 
 async function compressScreenshot(file: File): Promise<string> {
@@ -93,6 +111,9 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
   const [notificationMenu, setNotificationMenu] = useState<null | { target: number | 'new' }>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState('');
+  const [alarmCustomOpen, setAlarmCustomOpen] = useState(false);
+  const [alarmCustomVal, setAlarmCustomVal] = useState('');
+  const [expanded, setExpanded] = useState<null | 'date' | 'time'>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const writableCalendars = state.calendars.filter((calendar) => !calendar.readOnly);
   const sortedNotifications = [...task.notifications].sort((a, b) => a - b);
@@ -111,7 +132,10 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
 
   const patch = (next: Partial<TaskItem>) => setTask((current) => ({ ...current, ...next }));
 
+  const toggleExpand = (which: 'date' | 'time') => setExpanded((cur) => (cur === which ? null : which));
+
   const setHasTime = (hasTime: boolean) => {
+    setExpanded(null);
     if (hasTime) {
       const due = startOfDay(task.due);
       due.setHours(9, 0, 0, 0);
@@ -131,6 +155,15 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
     }));
   };
 
+  const addCustomAlarm = () => {
+    const v = parseInt(alarmCustomVal, 10);
+    setAlarmCustomVal('');
+    setAlarmCustomOpen(false);
+    if (Number.isFinite(v) && v >= 0 && !task.alarms.includes(v)) toggleAlarm(v);
+  };
+
+  const alarmChips = [...new Set([...ALARM_CHIP_CHOICES, ...task.alarms])].sort((a, b) => a - b);
+
   const applyNotification = (minutes: number | null) => {
     const menu = notificationMenu;
     setNotificationMenu(null);
@@ -148,6 +181,8 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
     });
   };
 
+  const activeCal = state.calendars.find((c) => c.id === task.calendarId);
+
   const valid = task.title.trim().length > 0 && !!task.calendarId;
   const save = () => {
     if (!valid) return;
@@ -157,207 +192,296 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
 
   return (
     <div className="modal-backdrop task-modal-backdrop">
-      <div className="modal task-modal" role="dialog" aria-modal="true" aria-label={isNew ? 'New task' : 'Edit task'}>
+      <div
+        className="modal task-modal gsheet-v2"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isNew ? 'New task' : 'Edit task'}
+      >
         <div className="task-sheet-head">
-          <button className="gsheet-cancel" onClick={onClose}>Cancel</button>
+          <button className="gsheet-cancel" onClick={onClose}>
+            Cancel
+          </button>
           <strong>{isNew ? 'New task' : 'Edit task'}</strong>
-          <button className="gsheet-save" onClick={save} disabled={!valid}>Save</button>
+          <button className="gs-save-pill" onClick={save} disabled={!valid}>
+            Save
+          </button>
         </div>
 
         <div className="task-sheet-scroll">
-          <div className="task-title-wrap">
-            <input
-              className="gsheet-title"
-              placeholder="Add title"
-              value={task.title}
-              autoFocus={isNew}
-              onChange={(event) => patch({ title: event.target.value })}
-              onKeyDown={(event) => event.key === 'Enter' && save()}
-            />
+          {/* title + Event/Task segmented control */}
+          <div className="gs-title-block">
+            <div className="gs-title-row">
+              <span className="gs-title-dot" style={{ background: activeCal?.color }} aria-hidden="true" />
+              <input
+                className="gsheet-title"
+                placeholder="Add title"
+                value={task.title}
+                autoFocus={isNew}
+                onChange={(event) => patch({ title: event.target.value })}
+                onKeyDown={(event) => event.key === 'Enter' && save()}
+              />
+            </div>
             {isNew && onSwitchToEvent && (
-              <div className="kind-chips">
-                <button className="cal-chip" onClick={onSwitchToEvent}>Event</button>
-                <button className="cal-chip" aria-pressed="true">Task</button>
+              <div className="gs-seg" role="tablist" aria-label="Entry type">
+                <button className="gs-seg-btn" role="tab" aria-selected="false" onClick={onSwitchToEvent}>
+                  Event
+                </button>
+                <button className="gs-seg-btn is-active" role="tab" aria-selected="true">
+                  Task
+                </button>
               </div>
             )}
           </div>
 
-          <div className="gdiv" />
-
-          <div className="grow-item task-details-row">
-            <span className="gicon"><Notes size={22} /></span>
-            <textarea
-              className="ginput"
-              placeholder="Add details"
-              rows={2}
-              value={task.description ?? ''}
-              onChange={(event) => patch({ description: event.target.value || undefined })}
-            />
+          {/* calendar chips */}
+          <div className="gs-chip-lane">
+            {writableCalendars.map((calendar) => (
+              <button
+                key={calendar.id}
+                className="gs-cal-chip"
+                aria-pressed={task.calendarId === calendar.id}
+                style={{ ['--chip-color' as any]: calendar.color }}
+                onClick={() => patch({ calendarId: calendar.id })}
+              >
+                <span className="dot" style={{ background: calendar.color }} />
+                {calendar.name}
+              </button>
+            ))}
           </div>
 
-          <div className="gdiv" />
-
-          <div className="grow-item">
-            <span className="gicon"><Clock size={22} /></span>
-            <span className="glabel">All day</span>
-            <input
-              type="checkbox"
-              className="ios-switch"
-              checked={!task.hasTime}
-              onChange={(event) => setHasTime(!event.target.checked)}
-              aria-label="All day"
-            />
-          </div>
-
-          <div className="grow-item task-date-row">
-            <span className="gicon" />
-            <input
-              type="date"
-              className="task-date-input"
-              aria-label="Due date"
-              value={toLocalDateValue(task.due)}
-              onChange={(event) => {
-                const [year, month, day] = event.target.value.split('-').map(Number);
-                if (!year) return;
-                const current = new Date(task.due);
-                patch({ due: new Date(year, month - 1, day, current.getHours(), current.getMinutes()).getTime() });
-              }}
-            />
-            {task.hasTime && (
+          {/* when card */}
+          <div className="gs-card">
+            <div className="gs-row">
+              <span className="gs-ic">
+                <Clock size={20} />
+              </span>
+              <span className="gs-label">All day</span>
               <input
-                type="time"
-                className="task-time-input"
-                aria-label="Due time"
-                value={timeValue(task.due)}
-                onChange={(event) => {
-                  const [hour, minute] = event.target.value.split(':').map(Number);
-                  if (!Number.isFinite(hour)) return;
-                  const due = startOfDay(task.due);
-                  due.setHours(hour, minute);
-                  patch({ due: due.getTime() });
-                }}
+                type="checkbox"
+                className="ios-switch"
+                checked={!task.hasTime}
+                onChange={(event) => setHasTime(!event.target.checked)}
+                aria-label="All day"
               />
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row">
+              <span className="gs-ic" />
+              <button
+                className={`gs-date-chip${expanded === 'date' ? ' is-open' : ''}`}
+                onClick={() => toggleExpand('date')}
+              >
+                {fmtRowDate(task.due)}
+              </button>
+              <span className="gs-flex" />
+              {task.hasTime && (
+                <button
+                  className={`gs-time-chip is-start${expanded === 'time' ? ' is-open' : ''}`}
+                  onClick={() => toggleExpand('time')}
+                >
+                  {timeValue(task.due)}
+                </button>
+              )}
+            </div>
+            {expanded === 'date' && (
+              <div className="gs-inline">
+                <MiniMonth
+                  selected={new Date(task.due)}
+                  onSelect={(d) => {
+                    const current = new Date(task.due);
+                    const next = new Date(d);
+                    next.setHours(current.getHours(), current.getMinutes(), 0, 0);
+                    patch({ due: next.getTime() });
+                  }}
+                  weekStartsOn={state.settings.weekStartsOn}
+                  busyDays={new Set()}
+                />
+              </div>
+            )}
+            {expanded === 'time' && task.hasTime && (
+              <div className="gs-inline">
+                <ClockWheel
+                  hour={new Date(task.due).getHours()}
+                  minute={new Date(task.due).getMinutes()}
+                  onHour={(hour) => {
+                    const due = new Date(task.due);
+                    due.setHours(hour);
+                    patch({ due: due.getTime() });
+                  }}
+                  onMinute={(minute) => {
+                    const due = new Date(task.due);
+                    due.setMinutes(minute);
+                    patch({ due: due.getTime() });
+                  }}
+                />
+              </div>
             )}
           </div>
 
-          <div className="grow-item">
-            <span className="gicon"><Repeat size={22} /></span>
-            <select
-              className="gselect"
-              value={recToChoice(task.recurrence)}
-              onChange={(event) => patch({
-                recurrence: choiceToRec(event.target.value as RecChoice, task.due),
-                exceptions: undefined,
-              })}
-            >
-              <option value="none">Does not repeat</option>
-              <option value="DAILY">Daily</option>
-              <option value="WEEKDAYS">Every weekday (Mon-Fri)</option>
-              <option value="WEEKLY">Weekly</option>
-              <option value="MONTHLY">Monthly</option>
-              <option value="YEARLY">Yearly</option>
-            </select>
-          </div>
-
-          <div className="gdiv" />
-
-          <div className="grow-item">
-            <span className="gicon"><CalIcon size={22} /></span>
-            <div className="cal-chip-row">
-              {writableCalendars.map((calendar) => (
-                <button
-                  key={calendar.id}
-                  className="cal-chip"
-                  aria-pressed={task.calendarId === calendar.id}
-                  style={{ ['--chip-color' as any]: calendar.color }}
-                  onClick={() => patch({ calendarId: calendar.id })}
-                >
-                  <span className="dot" style={{ background: calendar.color }} />
-                  {calendar.name}
+          {/* details card: details · repeat · screenshot */}
+          <div className="gs-card">
+            <div className="gs-row" style={{ alignItems: 'flex-start' }}>
+              <span className="gs-ic" style={{ paddingTop: 2 }}>
+                <Notes size={20} />
+              </span>
+              <textarea
+                className="gs-input"
+                placeholder="Add details"
+                rows={2}
+                value={task.description ?? ''}
+                onChange={(event) => patch({ description: event.target.value || undefined })}
+              />
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row gs-repeat">
+              <span className="gs-ic">
+                <Repeat size={20} />
+              </span>
+              <span className="gs-label">Repeat</span>
+              <span className="gs-value">{REC_LABELS[recToChoice(task.recurrence)]}</span>
+              <span className="gs-chev" aria-hidden="true">
+                <ChevronRight size={16} />
+              </span>
+              <select
+                className="gs-select-overlay"
+                aria-label="Repeat"
+                value={recToChoice(task.recurrence)}
+                onChange={(event) =>
+                  patch({
+                    recurrence: choiceToRec(event.target.value as RecChoice, task.due),
+                    exceptions: undefined,
+                  })
+                }
+              >
+                <option value="none">Never</option>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKDAYS">Every weekday (Mon-Fri)</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="MONTHLY">Monthly</option>
+                <option value="YEARLY">Yearly</option>
+              </select>
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row task-screenshot-row" style={{ alignItems: 'flex-start' }}>
+              <span className="gs-ic" style={{ paddingTop: 2 }}>
+                <Camera size={20} />
+              </span>
+              <div className="task-screenshot-body">
+                <button className="task-screenshot-action" onClick={() => fileRef.current?.click()}>
+                  {task.screenshot ? 'Replace screenshot' : 'Add screenshot'}
                 </button>
-              ))}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (file) patch({ screenshot: await compressScreenshot(file) });
+                    event.target.value = '';
+                  }}
+                />
+                {task.screenshot && (
+                  <figure className="task-screenshot-preview">
+                    <img src={task.screenshot} alt="Task screenshot" />
+                    <button aria-label="Remove screenshot" onClick={() => patch({ screenshot: undefined })}>
+                      <Close size={16} />
+                    </button>
+                  </figure>
+                )}
+              </div>
             </div>
           </div>
 
           {task.hasTime && (
             <>
-              <div className="gdiv" />
-              {sortedNotifications.map((minutes, index) => (
-                <button
-                  key={minutes}
-                  className="grow-item galarm"
-                  onClick={() => setNotificationMenu({ target: minutes })}
-                >
-                  <span className="gicon">{index === 0 ? <ReminderIcon size={23} /> : null}</span>
-                  <span className="glabel">{notificationLabel(minutes)}</span>
-                  <span className="gunfold"><ChevronDown size={14} /></span>
+              {/* standard notifications */}
+              <div className="gs-section-label">Notifications</div>
+              <div className="gs-card">
+                {sortedNotifications.map((minutes, index) => (
+                  <span key={minutes} style={{ display: 'contents' }}>
+                    {index > 0 && <div className="gs-sep" />}
+                    <button className="gs-row gs-tap" onClick={() => setNotificationMenu({ target: minutes })}>
+                      <span className="gs-ic">{index === 0 ? <ReminderIcon size={21} /> : null}</span>
+                      <span className="gs-label">{notificationLabel(minutes)}</span>
+                      <span className="gs-chev">
+                        <ChevronRight size={16} />
+                      </span>
+                    </button>
+                  </span>
+                ))}
+                {sortedNotifications.length > 0 && <div className="gs-sep" />}
+                <button className="gs-row gs-tap" onClick={() => setNotificationMenu({ target: 'new' })}>
+                  <span className="gs-ic">
+                    {sortedNotifications.length === 0 ? <ReminderIcon size={21} /> : null}
+                  </span>
+                  <span className="gs-label gs-muted">Add notification</span>
+                  <span className="gs-chev">
+                    <ChevronRight size={16} />
+                  </span>
                 </button>
-              ))}
-              <button className="grow-item galarm" onClick={() => setNotificationMenu({ target: 'new' })}>
-                <span className="gicon">{sortedNotifications.length === 0 ? <ReminderIcon size={23} /> : null}</span>
-                <span className="glabel gmuted">Add notification</span>
-                <span className="gunfold"><ChevronDown size={14} /></span>
-              </button>
+              </div>
 
-              <div className="grow-item galarm-choice editor-alarm-swimlane">
-                <span className="gicon"><RingingBell size={22} /></span>
-                <div className="galarm-choice-body">
-                  <span className="glabel">Alarm</span>
-                  <div className="alarm-chips" role="group" aria-label="Alarm time">
-                    {ALARM_CHOICES.map((minutes) => (
+              {/* the alarm — same promoted card as the event sheet */}
+              <div className="gs-section-label is-alarm">Alarm</div>
+              <div className="gs-alarm-card">
+                <div className="gs-alarm-head">
+                  <span className="gs-alarm-bell" aria-hidden="true">
+                    <span className="gs-alarm-ring" />
+                    <RingingBell size={20} />
+                  </span>
+                  <div className="gs-alarm-copy">
+                    <div className="gs-alarm-title">Rings until you stop it</div>
+                    <div className="gs-alarm-sub">A real alarm — even when your phone is on silent.</div>
+                  </div>
+                </div>
+                <div className="gs-alarm-lane" role="group" aria-label="Alarm times">
+                  {alarmChips.map((minutes) => {
+                    const active = task.alarms.includes(minutes);
+                    return (
                       <button
                         key={minutes}
-                        className="chip-btn"
-                        aria-pressed={task.alarms.includes(minutes)}
+                        className="gs-alarm-chip"
+                        aria-pressed={active}
                         onClick={() => toggleAlarm(minutes)}
                       >
-                        {minutes} min
+                        {alarmChipLabel(minutes)}
+                        {active && <span className="x">×</span>}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
+                  {alarmCustomOpen ? (
+                    <span className="gs-alarm-chip gs-alarm-custom">
+                      <input
+                        type="number"
+                        min={0}
+                        autoFocus
+                        placeholder="min"
+                        value={alarmCustomVal}
+                        onChange={(event) => setAlarmCustomVal(event.target.value)}
+                        onBlur={addCustomAlarm}
+                        onKeyDown={(event) => event.key === 'Enter' && addCustomAlarm()}
+                      />
+                    </span>
+                  ) : (
+                    <button
+                      className="gs-alarm-chip gs-alarm-add"
+                      aria-label="Add custom alarm"
+                      onClick={() => setAlarmCustomOpen(true)}
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
               </div>
             </>
           )}
 
-          <div className="gdiv" />
-
-          <div className="grow-item task-screenshot-row">
-            <span className="gicon"><Camera size={22} /></span>
-            <div className="task-screenshot-body">
-              <button className="task-screenshot-action" onClick={() => fileRef.current?.click()}>
-                {task.screenshot ? 'Replace screenshot' : 'Add screenshot'}
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                hidden
-                onChange={async (event) => {
-                  const file = event.target.files?.[0];
-                  if (file) patch({ screenshot: await compressScreenshot(file) });
-                  event.target.value = '';
-                }}
-              />
-              {task.screenshot && (
-                <figure className="task-screenshot-preview">
-                  <img src={task.screenshot} alt="Task screenshot" />
-                  <button aria-label="Remove screenshot" onClick={() => patch({ screenshot: undefined })}>
-                    <Close size={16} />
-                  </button>
-                </figure>
-              )}
-            </div>
-          </div>
-
           {!isNew && onDelete && (
-            <>
-              <div className="gdiv" />
-              <button className="grow-item gdelete" onClick={onDelete}>
-                <span className="gicon" />
-                <span className="glabel">Delete task</span>
-              </button>
-            </>
+            <button className="gs-delete" onClick={onDelete}>
+              Delete task
+            </button>
           )}
         </div>
 
