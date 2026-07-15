@@ -6651,3 +6651,10 @@ button.task-ring:active {
   gap: 10px;
 }
 
+
+/* seamless Event/Task switch: the replacement sheet appears without
+   replaying the backdrop fade and slide-up entrance */
+.modal-backdrop.gs-seamless,
+.gs-seamless .modal {
+  transition: none;
+}

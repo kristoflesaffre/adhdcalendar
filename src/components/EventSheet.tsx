@@ -18,6 +18,8 @@ import { ChevronDown, ChevronRight, Clock, Notes, Palette, Pin, ReminderIcon, Re
 interface Props {
   draft: EventItem;
   isNew: boolean;
+  /** skip the entrance animation (used for the Event/Task switch) */
+  seamless?: boolean;
   onSave: (ev: EventItem) => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -177,7 +179,7 @@ function TimeWheel({ value, onChange }: { value: number; onChange: (t: number) =
 
 /* ------------------- the sheet ------------------- */
 
-export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchToTask }: Props) {
+export function EventSheet({ draft, isNew, seamless, onSave, onDelete, onClose, onSwitchToTask }: Props) {
   const { state } = useStore();
   const [ev, setEv] = useState<EventItem>(draft);
   const [expanded, setExpanded] = useState<Expanded>(null);
@@ -280,7 +282,10 @@ export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
   };
 
   return (
-    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className={`modal-backdrop${seamless ? ' gs-seamless' : ''}`}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div
         className="modal gsheet gsheet-v2"
         role="dialog"

@@ -67,11 +67,15 @@ interface PopoverState {
 interface EditorState {
   draft: EventItem;
   isNew: boolean;
+  /** true when opened via the Event/Task switch — skip the entrance animation */
+  seamless?: boolean;
 }
 
 interface TaskEditorState {
   draft: TaskItem;
   isNew: boolean;
+  /** true when opened via the Event/Task switch — skip the entrance animation */
+  seamless?: boolean;
 }
 
 export default function App() {
@@ -331,7 +335,7 @@ export default function App() {
 
   /* ---- task handlers ---- */
   const openCreateTask = useCallback(
-    (at?: number) => {
+    (at?: number, seamless = false) => {
       const firstWritable = state.calendars.find((c) => !c.readOnly);
       if (!firstWritable) return;
       setCreateMenuOpen(false);
@@ -345,6 +349,7 @@ export default function App() {
           at,
         ),
         isNew: true,
+        seamless,
       });
     },
     [state.calendars, state.settings.defaultAlarms, state.settings.defaultNotifications],
@@ -398,7 +403,7 @@ export default function App() {
   );
 
   const openCreate = useCallback(
-    (start?: number, end?: number, allDay = false) => {
+    (start?: number, end?: number, allDay = false, seamless = false) => {
       const firstWritable = state.calendars.find((c) => !c.readOnly);
       if (!firstWritable) return;
       setCreateMenuOpen(false);
@@ -413,7 +418,7 @@ export default function App() {
       }
       d.allDay = allDay;
       setPopover(null);
-      setEditor({ draft: d, isNew: true });
+      setEditor({ draft: d, isNew: true, seamless });
     },
     [state.calendars, state.settings.defaultAlarms, state.settings.defaultNotifications],
   );
@@ -898,6 +903,7 @@ export default function App() {
           const editorProps = {
             draft: editor.draft,
             isNew: editor.isNew,
+            seamless: editor.seamless,
             onSave: saveEvent,
             onDelete: editor.isNew
               ? undefined
@@ -911,7 +917,7 @@ export default function App() {
               ? () => {
                   const at = editor.draft.start;
                   setEditor(null);
-                  openCreateTask(at);
+                  openCreateTask(at, true);
                 }
               : undefined,
           };
@@ -922,6 +928,7 @@ export default function App() {
         <TaskEditor
           draft={taskEditor.draft}
           isNew={taskEditor.isNew}
+          seamless={taskEditor.seamless}
           onSave={saveTask}
           onDelete={
             taskEditor.isNew
@@ -937,7 +944,7 @@ export default function App() {
               ? () => {
                   const at = taskEditor.draft.due;
                   setTaskEditor(null);
-                  openCreate(at + 9 * 3_600_000 * Number(!taskEditor.draft.hasTime));
+                  openCreate(at + 9 * 3_600_000 * Number(!taskEditor.draft.hasTime), undefined, false, true);
                 }
               : undefined
           }

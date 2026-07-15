@@ -36,6 +36,8 @@ import {
 interface Props {
   draft: EventItem;
   isNew: boolean;
+  /** skip the entrance animation (used for the Event/Task switch) */
+  seamless?: boolean;
   onSave: (ev: EventItem) => void;
   onDelete?: () => void;
   onClose: () => void;

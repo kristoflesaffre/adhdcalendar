@@ -17,6 +17,8 @@ import { Camera, ChevronDown, ChevronRight, Clock, Close, Notes, ReminderIcon, R
 interface Props {
   draft: TaskItem;
   isNew: boolean;
+  /** skip the entrance animation (used for the Event/Task switch) */
+  seamless?: boolean;
   onSave: (task: TaskItem) => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -105,7 +107,7 @@ async function compressScreenshot(file: File): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.84);
 }
 
-export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchToEvent }: Props) {
+export function TaskEditor({ draft, isNew, seamless, onSave, onDelete, onClose, onSwitchToEvent }: Props) {
   const { state } = useStore();
   const [task, setTask] = useState<TaskItem>(draft);
   const [notificationMenu, setNotificationMenu] = useState<null | { target: number | 'new' }>(null);
@@ -191,7 +193,10 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
   };
 
   return (
-    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className={`modal-backdrop${seamless ? ' gs-seamless' : ''}`}
+      onClick={(event) => event.target === event.currentTarget && onClose()}
+    >
       <div
         className="modal gsheet gsheet-v2"
         role="dialog"
