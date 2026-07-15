@@ -208,6 +208,13 @@ textarea {
   font-weight: 780;
 }
 
+.logo-mark {
+  display: block;
+  flex: none;
+  object-fit: contain;
+  border-radius: 22%;
+}
+
 .sync-auth-copy {
   display: grid;
   gap: 7px;
@@ -498,7 +505,7 @@ textarea {
   user-select: none;
 }
 
-.wordmark svg {
+.wordmark .logo-mark {
   flex: none;
   display: block;
 }
