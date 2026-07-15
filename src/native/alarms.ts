@@ -36,10 +36,14 @@ export interface StandardNotificationLike {
 
 // each notification plays the full 29s tolling bell; 30s gaps make the
 // chain ring near-continuously for ~7.5 minutes even when force-quit
-const CHAIN_LENGTH = 15;
+const MAX_CHAIN_LENGTH = 15;
 const CHAIN_GAP_MS = 30_000;
 const FALLBACK_DELAY_MS = 25_000;
 const TEST_ALARM_ID = 999_000_001;
+const TEST_ALARM_THREAD = 'carillon-test-alarm';
+const MAX_PENDING_NOTIFICATIONS = 64;
+const RESERVED_TEST_SLOTS = 1;
+const MAX_STANDARD_NOTIFICATIONS = 18;
 
 function isNative(): boolean {
   return !!(window as any).Capacitor?.isNativePlatform?.();
@@ -52,7 +56,7 @@ function numericId(key: string, i: number): number {
     h ^= key.charCodeAt(c);
     h = Math.imul(h, 16777619);
   }
-  return (Math.abs(h) % 100_000_000) * 10 + i;
+  return (Math.abs(h) % 20_000_000) * 100 + i;
 }
 
 function notificationId(key: string): number {
@@ -64,12 +68,31 @@ function notificationId(key: string): number {
   return 1_100_000_000 + (Math.abs(h) % 900_000_000);
 }
 
-export async function syncNativeAlarms(
+let nativeSyncQueue: Promise<void> = Promise.resolve();
+
+export function syncNativeAlarms(
   pending: PendingLike[],
   soundId?: string,
   standardNotifications: StandardNotificationLike[] = [],
 ): Promise<void> {
-  if (!isNative()) return;
+  if (!isNative()) return Promise.resolve();
+
+  // State changes can arrive while the previous cancel/schedule cycle is
+  // still running. Serialize snapshots so an older cycle cannot erase the
+  // notifications that a newer cycle just installed.
+  const pendingSnapshot = pending.map((alarm) => ({ ...alarm, base: { ...alarm.base } }));
+  const notificationSnapshot = standardNotifications.map((notification) => ({ ...notification }));
+  nativeSyncQueue = nativeSyncQueue
+    .catch(() => undefined)
+    .then(() => performNativeAlarmSync(pendingSnapshot, soundId, notificationSnapshot));
+  return nativeSyncQueue;
+}
+
+async function performNativeAlarmSync(
+  pending: PendingLike[],
+  soundId: string | undefined,
+  standardNotifications: StandardNotificationLike[],
+): Promise<void> {
   try {
     const { LocalNotifications } = await import('@capacitor/local-notifications');
     const perm = await LocalNotifications.requestPermissions();
@@ -85,11 +108,40 @@ export async function syncNativeAlarms(
       });
     }
 
+    const reminderNotifications = standardNotifications
+      .slice(0, MAX_STANDARD_NOTIFICATIONS)
+      .map((notification) => ({
+        id: notificationId(notification.key),
+        title: notification.title,
+        body: notification.body,
+        schedule: { at: new Date(notification.triggerAt), allowWhileIdle: true },
+        sound: 'notification.wav',
+        threadIdentifier: notification.key,
+        extra: { carillonKind: 'notification' },
+      }));
+
     const sound = alarmSoundFileName(soundId);
-    // iOS keeps at most 64 pending local notifications. Reserve 45 slots
-    // for the next three persistent alarm chains and the rest for reminders.
-    const alarmNotifications = pending.slice(0, 3).flatMap((p) =>
-      Array.from({ length: CHAIN_LENGTH }, (_, i) => ({
+    const alarmCapacity = Math.max(
+      0,
+      MAX_PENDING_NOTIFICATIONS - RESERVED_TEST_SLOTS - reminderNotifications.length,
+    );
+    const protectedAlarms = pending.slice(0, alarmCapacity);
+    const chainLengths = protectedAlarms.map(() => 1);
+    let remainingSlots = alarmCapacity - protectedAlarms.length;
+    let chainIndex = 0;
+    while (remainingSlots > 0 && chainLengths.length > 0) {
+      if (chainLengths[chainIndex] < MAX_CHAIN_LENGTH) {
+        chainLengths[chainIndex] += 1;
+        remainingSlots -= 1;
+      }
+      chainIndex = (chainIndex + 1) % chainLengths.length;
+      if (chainLengths.every((length) => length === MAX_CHAIN_LENGTH)) break;
+    }
+
+    // Every protected alarm gets at least one OS-scheduled audible fallback.
+    // Remaining slots are distributed evenly as repeat chains.
+    const alarmNotifications = protectedAlarms.flatMap((p, alarmIndex) =>
+      Array.from({ length: chainLengths[alarmIndex] }, (_, i) => ({
         id: numericId(p.key, i),
         title: `🔔 ${p.base.title}`,
         body:
@@ -109,16 +161,6 @@ export async function syncNativeAlarms(
       })),
     );
 
-    const reminderNotifications = standardNotifications.slice(0, 18).map((notification) => ({
-      id: notificationId(notification.key),
-      title: notification.title,
-      body: notification.body,
-      schedule: { at: new Date(notification.triggerAt), allowWhileIdle: true },
-      sound: 'notification.wav',
-      threadIdentifier: notification.key,
-      extra: { carillonKind: 'notification' },
-    }));
-
     const notifications = [...reminderNotifications, ...alarmNotifications];
 
     if (notifications.length) {
@@ -134,7 +176,7 @@ export async function cancelNativeAlarm(key: string): Promise<void> {
   if (!isNative()) return;
   try {
     const { LocalNotifications } = await import('@capacitor/local-notifications');
-    const ids = Array.from({ length: CHAIN_LENGTH }, (_, i) => ({ id: numericId(key, i) }));
+    const ids = Array.from({ length: MAX_CHAIN_LENGTH }, (_, i) => ({ id: numericId(key, i) }));
     await LocalNotifications.cancel({ notifications: ids });
   } catch {
     // ignore
@@ -191,6 +233,7 @@ export async function scheduleTestAlarm(afterSeconds: number, soundId?: string):
         // happen first; this notification only proves the fallback path.
         schedule: { at: new Date(Date.now() + afterSeconds * 1000 + FALLBACK_DELAY_MS) },
         sound: alarmSoundFileName(soundId),
+        threadIdentifier: TEST_ALARM_THREAD,
       },
     ],
   });

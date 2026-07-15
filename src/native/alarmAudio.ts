@@ -13,9 +13,15 @@ import { alarmSoundResource } from '../alarm/sounds';
  */
 interface AlarmAudioPlugin {
   startKeepAlive(): Promise<void>;
-  scheduleRing(options: { at: number; title?: string; body?: string; sound?: string }): Promise<void>;
+  scheduleRing(options: {
+    at: number;
+    key?: string;
+    title?: string;
+    body?: string;
+    sound?: string;
+  }): Promise<void>;
   cancelRing(): Promise<void>;
-  ring(options?: { sound?: string }): Promise<void>;
+  ring(options?: { key?: string; sound?: string }): Promise<void>;
   stop(): Promise<void>;
   syncTimerActivities(options: { timers: TimerActivityLike[] }): Promise<void>;
 }
@@ -62,18 +68,21 @@ export async function armNativeRing(
   title?: string,
   body?: string,
   soundId?: string,
+  alarmKey?: string,
 ): Promise<void> {
   if (!isNative()) return;
   if (Date.now() < testRingUntil) return; // don't clobber an active test
   const sound = alarmSoundResource(soundId);
-  const key = atMs === null ? 'off' : `${atMs}|${title ?? ''}|${sound}`;
+  const key = atMs === null ? 'off' : `${atMs}|${alarmKey ?? ''}|${title ?? ''}|${sound}`;
   if (key === lastArmed) return;
-  lastArmed = key;
   try {
     if (atMs === null) await AlarmAudio.cancelRing();
-    else await AlarmAudio.scheduleRing({ at: atMs, title, body, sound });
+    else await AlarmAudio.scheduleRing({ at: atMs, key: alarmKey, title, body, sound });
+    // Only cache a successful native call. A failed audio-session start must
+    // be retried by the next engine tick instead of silently staying disarmed.
+    lastArmed = key;
   } catch {
-    // ignore — fallback paths still apply
+    lastArmed = null;
   }
 }
 
@@ -105,10 +114,10 @@ export async function syncTimerLiveActivities(timers: TimerActivityLike[]): Prom
 }
 
 /** Ring right now (backup path used when JS happens to be awake) */
-export async function ringNativeAlarm(soundId?: string): Promise<void> {
+export async function ringNativeAlarm(soundId?: string, alarmKey?: string): Promise<void> {
   if (!isNative()) return;
   try {
-    await AlarmAudio.ring({ sound: alarmSoundResource(soundId) });
+    await AlarmAudio.ring({ key: alarmKey, sound: alarmSoundResource(soundId) });
   } catch {
     // ignore
   }
@@ -136,6 +145,7 @@ export async function armTestRing(afterSeconds: number, soundId?: string): Promi
   try {
     await AlarmAudio.scheduleRing({
       at,
+      key: 'carillon-test-alarm',
       title: '🔔 Test alarm',
       body: 'Ringing — open the app to stop',
       sound: alarmSoundResource(soundId),

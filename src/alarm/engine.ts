@@ -11,7 +11,9 @@ const SNOOZE_KEY = 'carillon.snoozes.v1';
 const TICK_MS = 5_000;
 /** an alarm still fires if we were away, up to this long after its moment */
 const LATE_WINDOW = 15 * MS_MIN;
-const LOOKAHEAD = 2 * MS_DAY;
+// Keep native alarm fallbacks scheduled well beyond the next app launch.
+// A two-day window left later events unprotected when iOS suspended the app.
+const LOOKAHEAD = 67 * MS_DAY;
 const NOTIFICATION_LOOKAHEAD = 67 * MS_DAY;
 
 function loadJson<T>(key: string, fallback: T): T {
@@ -240,7 +242,9 @@ export function useAlarmEngine(state: AppState): {
         for (const d of due) void notifySystem({ ...d.base, firedAt: now });
         // backgrounded/locked: the in-app bell can't be heard, so ring
         // through the native background audio session instead
-        if (document.hidden) void ringNativeAlarm(stateRef.current.settings.alarmSound);
+        if (document.hidden) {
+          void ringNativeAlarm(stateRef.current.settings.alarmSound, due[0]?.key);
+        }
       }
       if (due.length || pruned) saveJson(FIRED_KEY, fired);
 
@@ -259,6 +263,7 @@ export function useAlarmEngine(state: AppState): {
               ' — ringing, open the app to stop'
           : undefined,
         stateRef.current.settings.alarmSound,
+        nextFuture?.key,
       );
     };
 
