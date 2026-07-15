@@ -31,6 +31,15 @@
   --font-numeric: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 
   --grad-deep: #171f45;
+  --logo-wordmark-ink: #10223d;
+  --logo-wordmark-gradient: linear-gradient(
+    120deg,
+    #35a9f5 0%,
+    #0868e8 27%,
+    #08bddd 50%,
+    #23c98d 72%,
+    #475fe8 100%
+  );
   --brand-grad: linear-gradient(135deg, hsl(158 72% 46%) 0%, hsl(194 76% 48%) 45%, hsl(222 78% 50%) 100%);
   --brand-grad-strong: linear-gradient(135deg, hsl(158 68% 38%) 0%, hsl(194 72% 40%) 42%, hsl(222 78% 43%) 100%);
   --brand-shadow: 0 8px 20px hsl(207 76% 39% / 0.28), 0 2px 6px rgba(20, 20, 24, 0.12);
@@ -131,6 +140,15 @@
   --accent-soft: #004a77;
   --now: #f28b82;
   --danger: #e06052;
+  --logo-wordmark-ink: #dbe8ff;
+  --logo-wordmark-gradient: linear-gradient(
+    120deg,
+    #7bd3ff 0%,
+    #5c98ff 27%,
+    #43e1e5 50%,
+    #6ce9aa 72%,
+    #8d9cff 100%
+  );
   --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.4), 0 12px 40px rgba(0, 0, 0, 0.5);
   --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.45), 0 24px 80px rgba(0, 0, 0, 0.6);
   color-scheme: dark;
@@ -202,10 +220,16 @@ textarea {
   gap: 11px;
   font-size: 20px;
   font-weight: 500;
+  color: var(--logo-wordmark-ink);
 }
 
 .sync-auth-brand strong {
   font-weight: 780;
+  color: transparent;
+  background: var(--logo-wordmark-gradient);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .logo-mark {
@@ -515,14 +539,18 @@ textarea {
   font-size: 16.5px;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  color: var(--ink-2);
+  color: var(--logo-wordmark-ink);
 }
 
 .wordmark-name em {
   font-style: normal;
   font-weight: 800;
-  color: var(--ink);
   margin-right: 1px;
+  color: transparent;
+  background: var(--logo-wordmark-gradient);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .topbar-title {
