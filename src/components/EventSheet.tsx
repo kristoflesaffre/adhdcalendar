@@ -5,14 +5,14 @@ import { MS_DAY, MS_HOUR, startOfDay } from '../lib/dates';
 import { useStore } from '../state/store';
 import { ensureAudioUnlocked } from '../alarm/sound';
 import { MiniMonth } from './MiniMonth';
-import { ChevronDown, Clock, Notes, Palette, Pin, ReminderIcon, Repeat, RingingBell } from './icons';
+import { ChevronDown, ChevronRight, Clock, Notes, Palette, Pin, ReminderIcon, Repeat, RingingBell } from './icons';
 
 /**
- * Google Calendar iOS event editor, rebuilt interaction-for-interaction:
- * no input boxes — tappable rows. The date opens an inline month grid, the
- * time opens an inline hour/minute wheel, notifications open a menu
- * (None / 30 minutes before / … / Custom), and "More options" reveals
- * repeat, colour and description. Mobile only; desktop keeps EventEditor.
+ * Mobile event editor, restyled to the Claude Design mockup
+ * ("ADHD Calendar - New Event.dc.html"): pill Save button, title row with a
+ * calendar-colour dot, segmented Event/Task control, grouped inset cards for
+ * when/details/notifications, and a highlighted Alarm card with a chip
+ * swimlane. Mobile only; desktop keeps EventEditor.
  */
 
 interface Props {
@@ -42,8 +42,24 @@ function alarmLabel(m: number): string {
   return `${m} minutes before`;
 }
 
+/** Short chip label for the alarm swimlane: "At start", "5 min", "1 hour" */
+function alarmChipLabel(m: number): string {
+  if (m === 0) return 'At start';
+  if (m % 60 === 0) return m === 60 ? '1 hour' : `${m / 60} hours`;
+  return `${m} min`;
+}
+
 const MENU_CHOICES = [0, 10, 30, 60, 1440, 10080];
-const ALARM_CHOICES = [0, 5, 10, 15];
+const ALARM_CHIP_CHOICES = [0, 5, 10, 15, 30, 60];
+
+const REC_LABELS: Record<RecChoice, string> = {
+  none: 'Never',
+  DAILY: 'Daily',
+  WEEKDAYS: 'Weekdays',
+  WEEKLY: 'Weekly',
+  MONTHLY: 'Monthly',
+  YEARLY: 'Yearly',
+};
 
 type RecChoice = 'none' | 'DAILY' | 'WEEKDAYS' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
@@ -165,10 +181,11 @@ export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
   const { state } = useStore();
   const [ev, setEv] = useState<EventItem>(draft);
   const [expanded, setExpanded] = useState<Expanded>(null);
-  const [showMore, setShowMore] = useState(false);
   const [notificationMenu, setNotificationMenu] = useState<null | { target: number | 'new' }>(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customVal, setCustomVal] = useState('');
+  const [alarmCustomOpen, setAlarmCustomOpen] = useState(false);
+  const [alarmCustomVal, setAlarmCustomVal] = useState('');
   const writableCals = state.calendars.filter((c) => !c.readOnly);
 
   useEffect(() => {
@@ -243,6 +260,18 @@ export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
     }));
   };
 
+  const addCustomAlarm = () => {
+    const v = parseInt(alarmCustomVal, 10);
+    setAlarmCustomVal('');
+    setAlarmCustomOpen(false);
+    if (Number.isFinite(v) && v >= 0 && !ev.alarms.includes(v)) toggleAlarm(v);
+  };
+
+  const alarmChips = [...new Set([...ALARM_CHIP_CHOICES, ...ev.alarms])].sort((a, b) => a - b);
+
+  const activeCal = state.calendars.find((c) => c.id === ev.calendarId);
+  const dotColor = ev.color ?? activeCal?.color;
+
   const valid = ev.end > ev.start && !!ev.calendarId;
   const save = () => {
     if (!valid) return;
@@ -252,7 +281,12 @@ export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
 
   return (
     <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal gsheet" role="dialog" aria-modal="true" aria-label={isNew ? 'New event' : 'Edit event'}>
+      <div
+        className="modal gsheet gsheet-v2"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isNew ? 'New event' : 'Edit event'}
+      >
         <div className="gsheet-head">
           <button className="gsheet-cancel" onClick={onClose}>
             Cancel
@@ -260,302 +294,308 @@ export function EventSheet({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
           <span className="gsheet-grab" aria-hidden="true">
             <ChevronDown size={22} />
           </span>
-          <button
-            className="gsheet-save"
-            onClick={save}
-            disabled={!valid}
-            style={!valid ? { opacity: 0.4 } : undefined}
-          >
+          <button className="gs-save-pill" onClick={save} disabled={!valid}>
             Save
           </button>
         </div>
 
         <div className="gsheet-scroll">
-          <div className="gsheet-title-wrap">
-            <input
-              className="gsheet-title"
-              placeholder="Add title"
-              value={ev.title}
-              autoFocus={isNew}
-              onChange={(e) => patch({ title: e.target.value })}
-              onKeyDown={(e) => e.key === 'Enter' && save()}
-            />
+          {/* title + Event/Task segmented control */}
+          <div className="gs-title-block">
+            <div className="gs-title-row">
+              <span className="gs-title-dot" style={{ background: dotColor }} aria-hidden="true" />
+              <input
+                className="gsheet-title"
+                placeholder="Add title"
+                value={ev.title}
+                autoFocus={isNew}
+                onChange={(e) => patch({ title: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && save()}
+              />
+            </div>
             {isNew && onSwitchToTask && (
-              <div className="kind-chips">
-                <button className="cal-chip" aria-pressed="true">
+              <div className="gs-seg" role="tablist" aria-label="Entry type">
+                <button className="gs-seg-btn is-active" role="tab" aria-selected="true">
                   Event
                 </button>
-                <button className="cal-chip" onClick={onSwitchToTask}>
+                <button className="gs-seg-btn" role="tab" aria-selected="false" onClick={onSwitchToTask}>
                   Task
                 </button>
               </div>
             )}
           </div>
 
-          <div className="gdiv" />
-
-          {/* all day */}
-          <div className="grow-item">
-            <span className="gicon">
-              <Clock size={22} />
-            </span>
-            <span className="glabel">All day</span>
-            <input
-              type="checkbox"
-              className="ios-switch"
-              checked={ev.allDay}
-              onChange={(e) => setAllDay(e.target.checked)}
-              aria-label="All day"
-            />
-          </div>
-
-          {/* start */}
-          <div className="grow-item gdt">
-            <span className="gicon" />
-            <button
-              className={`gdt-date${expanded === 'startDate' ? ' is-open' : ''}`}
-              onClick={() => toggleExpand('startDate')}
-            >
-              {fmtRowDate(ev.start)}
-            </button>
-            {!ev.allDay && (
-              <button
-                className={`gdt-time${expanded === 'startTime' ? ' is-open' : ''}`}
-                onClick={() => toggleExpand('startTime')}
-              >
-                {fmtRowTime(ev.start)}
-              </button>
-            )}
-          </div>
-          {expanded === 'startDate' && (
-            <div className="ginline">
-              <MiniMonth
-                selected={new Date(ev.start)}
-                onSelect={(d) => setStartDate(d)}
-                weekStartsOn={state.settings.weekStartsOn}
-                busyDays={new Set()}
-              />
-            </div>
-          )}
-          {expanded === 'startTime' && (
-            <div className="ginline">
-              <TimeWheel value={ev.start} onChange={setStart} />
-            </div>
-          )}
-
-          {/* end */}
-          <div className="grow-item gdt">
-            <span className="gicon" />
-            <button
-              className={`gdt-date${expanded === 'endDate' ? ' is-open' : ''}`}
-              onClick={() => toggleExpand('endDate')}
-            >
-              {fmtRowDate(ev.allDay ? ev.end - 1 : ev.end)}
-            </button>
-            {!ev.allDay && (
-              <button
-                className={`gdt-time${expanded === 'endTime' ? ' is-open' : ''}`}
-                onClick={() => toggleExpand('endTime')}
-              >
-                {fmtRowTime(ev.end)}
-              </button>
-            )}
-          </div>
-          {expanded === 'endDate' && (
-            <div className="ginline">
-              <MiniMonth
-                selected={new Date(ev.allDay ? ev.end - 1 : ev.end)}
-                onSelect={(d) =>
-                  ev.allDay
-                    ? patch({ end: Math.max(startOfDay(d).getTime() + MS_DAY, ev.start + MS_DAY) })
-                    : setEndDate(d)
-                }
-                weekStartsOn={state.settings.weekStartsOn}
-                busyDays={new Set()}
-              />
-            </div>
-          )}
-          {expanded === 'endTime' && (
-            <div className="ginline">
-              <TimeWheel value={ev.end} onChange={setEndTime} />
-            </div>
-          )}
-
-          {!showMore && (
-            <button className="gmore" onClick={() => setShowMore(true)}>
-              More options
-            </button>
-          )}
-
-          <div className="gdiv" />
-
           {/* calendar chips */}
-          <div className="grow-item">
-            <span className="gicon" />
-            <div className="cal-chip-row">
-              {writableCals.map((c) => (
+          <div className="gs-chip-lane">
+            {writableCals.map((c) => (
+              <button
+                key={c.id}
+                className="gs-cal-chip"
+                aria-pressed={ev.calendarId === c.id}
+                style={{ ['--chip-color' as any]: c.color }}
+                onClick={() => patch({ calendarId: c.id })}
+              >
+                <span className="dot" style={{ background: c.color }} />
+                {c.name}
+              </button>
+            ))}
+          </div>
+
+          {/* when card */}
+          <div className="gs-card">
+            <div className="gs-row">
+              <span className="gs-ic">
+                <Clock size={20} />
+              </span>
+              <span className="gs-label">All day</span>
+              <input
+                type="checkbox"
+                className="ios-switch"
+                checked={ev.allDay}
+                onChange={(e) => setAllDay(e.target.checked)}
+                aria-label="All day"
+              />
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row">
+              <span className="gs-ic" />
+              <button
+                className={`gs-date-chip${expanded === 'startDate' ? ' is-open' : ''}`}
+                onClick={() => toggleExpand('startDate')}
+              >
+                {fmtRowDate(ev.start)}
+              </button>
+              <span className="gs-flex" />
+              {!ev.allDay && (
                 <button
-                  key={c.id}
-                  className="cal-chip"
-                  aria-pressed={ev.calendarId === c.id}
-                  style={{ ['--chip-color' as any]: c.color }}
-                  onClick={() => patch({ calendarId: c.id })}
+                  className={`gs-time-chip is-start${expanded === 'startTime' ? ' is-open' : ''}`}
+                  onClick={() => toggleExpand('startTime')}
                 >
-                  <span className="dot" style={{ background: c.color }} />
-                  {c.name}
+                  {fmtRowTime(ev.start)}
                 </button>
-              ))}
+              )}
+            </div>
+            {expanded === 'startDate' && (
+              <div className="gs-inline">
+                <MiniMonth
+                  selected={new Date(ev.start)}
+                  onSelect={(d) => setStartDate(d)}
+                  weekStartsOn={state.settings.weekStartsOn}
+                  busyDays={new Set()}
+                />
+              </div>
+            )}
+            {expanded === 'startTime' && (
+              <div className="gs-inline">
+                <TimeWheel value={ev.start} onChange={setStart} />
+              </div>
+            )}
+            <div className="gs-sep" />
+            <div className="gs-row">
+              <span className="gs-ic" />
+              <button
+                className={`gs-date-chip${expanded === 'endDate' ? ' is-open' : ''}`}
+                onClick={() => toggleExpand('endDate')}
+              >
+                {fmtRowDate(ev.allDay ? ev.end - 1 : ev.end)}
+              </button>
+              <span className="gs-flex" />
+              {!ev.allDay && (
+                <button
+                  className={`gs-time-chip${expanded === 'endTime' ? ' is-open' : ''}`}
+                  onClick={() => toggleExpand('endTime')}
+                >
+                  {fmtRowTime(ev.end)}
+                </button>
+              )}
+            </div>
+            {expanded === 'endDate' && (
+              <div className="gs-inline">
+                <MiniMonth
+                  selected={new Date(ev.allDay ? ev.end - 1 : ev.end)}
+                  onSelect={(d) =>
+                    ev.allDay
+                      ? patch({ end: Math.max(startOfDay(d).getTime() + MS_DAY, ev.start + MS_DAY) })
+                      : setEndDate(d)
+                  }
+                  weekStartsOn={state.settings.weekStartsOn}
+                  busyDays={new Set()}
+                />
+              </div>
+            )}
+            {expanded === 'endTime' && (
+              <div className="gs-inline">
+                <TimeWheel value={ev.end} onChange={setEndTime} />
+              </div>
+            )}
+          </div>
+
+          {/* details card: location · repeat · colour · description */}
+          <div className="gs-card">
+            <div className="gs-row">
+              <span className="gs-ic">
+                <Pin size={20} />
+              </span>
+              <input
+                className="gs-input"
+                placeholder="Add location"
+                value={ev.location ?? ''}
+                onChange={(e) => patch({ location: e.target.value || undefined })}
+              />
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row gs-repeat">
+              <span className="gs-ic">
+                <Repeat size={20} />
+              </span>
+              <span className="gs-label">Repeat</span>
+              <span className="gs-value">{REC_LABELS[recToChoice(ev.recurrence)]}</span>
+              <span className="gs-chev" aria-hidden="true">
+                <ChevronRight size={16} />
+              </span>
+              <select
+                className="gs-select-overlay"
+                aria-label="Repeat"
+                value={recToChoice(ev.recurrence)}
+                onChange={(e) =>
+                  patch({
+                    recurrence: choiceToRec(e.target.value as RecChoice, ev.start),
+                    exceptions: undefined,
+                  })
+                }
+              >
+                <option value="none">Never</option>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKDAYS">Every weekday (Mon–Fri)</option>
+                <option value="WEEKLY">
+                  Weekly on {new Date(ev.start).toLocaleDateString('en-GB', { weekday: 'long' })}
+                </option>
+                <option value="MONTHLY">Monthly on day {new Date(ev.start).getDate()}</option>
+                <option value="YEARLY">Yearly</option>
+              </select>
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row" style={{ alignItems: 'flex-start' }}>
+              <span className="gs-ic" style={{ paddingTop: 2 }}>
+                <Palette size={20} />
+              </span>
+              <span className="gswatches">
+                <button
+                  className="swatch"
+                  aria-pressed={!ev.color}
+                  aria-label="Calendar colour"
+                  style={{ background: activeCal?.color, opacity: ev.color ? 0.35 : 1 }}
+                  onClick={() => patch({ color: undefined })}
+                />
+                {EVENT_PALETTE.map((p) => (
+                  <button
+                    key={p.value}
+                    className="swatch"
+                    aria-pressed={ev.color === p.value}
+                    aria-label={p.name}
+                    style={{ background: p.value, opacity: !ev.color || ev.color === p.value ? 1 : 0.35 }}
+                    onClick={() => patch({ color: p.value })}
+                  />
+                ))}
+              </span>
+            </div>
+            <div className="gs-sep" />
+            <div className="gs-row" style={{ alignItems: 'flex-start' }}>
+              <span className="gs-ic" style={{ paddingTop: 2 }}>
+                <Notes size={20} />
+              </span>
+              <textarea
+                className="gs-input"
+                placeholder="Add description"
+                rows={2}
+                value={ev.description ?? ''}
+                onChange={(e) => patch({ description: e.target.value || undefined })}
+              />
             </div>
           </div>
 
-          <div className="gdiv" />
-
-          {/* location */}
-          <div className="grow-item">
-            <span className="gicon">
-              <Pin size={22} />
-            </span>
-            <input
-              className="ginput"
-              placeholder="Add location"
-              value={ev.location ?? ''}
-              onChange={(e) => patch({ location: e.target.value || undefined })}
-            />
-          </div>
-
-          <div className="gdiv" />
-
-          {/* standard notifications */}
           {!ev.allDay && (
             <>
-              {sortedNotifications.map((m, i) => (
-                <button
-                  key={m}
-                  className="grow-item galarm"
-                  onClick={() => setNotificationMenu({ target: m })}
-                >
-                  <span className="gicon">{i === 0 ? <ReminderIcon size={23} /> : null}</span>
-                  <span className="glabel">{alarmLabel(m)}</span>
-                  <span className="gunfold">
-                    <ChevronDown size={14} />
+              {/* standard notifications */}
+              <div className="gs-section-label">Notifications</div>
+              <div className="gs-card">
+                {sortedNotifications.map((m, i) => (
+                  <span key={m} style={{ display: 'contents' }}>
+                    {i > 0 && <div className="gs-sep" />}
+                    <button className="gs-row gs-tap" onClick={() => setNotificationMenu({ target: m })}>
+                      <span className="gs-ic">{i === 0 ? <ReminderIcon size={21} /> : null}</span>
+                      <span className="gs-label">{alarmLabel(m)}</span>
+                      <span className="gs-chev">
+                        <ChevronRight size={16} />
+                      </span>
+                    </button>
+                  </span>
+                ))}
+                {sortedNotifications.length > 0 && <div className="gs-sep" />}
+                <button className="gs-row gs-tap" onClick={() => setNotificationMenu({ target: 'new' })}>
+                  <span className="gs-ic">{sortedNotifications.length === 0 ? <ReminderIcon size={21} /> : null}</span>
+                  <span className="gs-label gs-muted">Add notification</span>
+                  <span className="gs-chev">
+                    <ChevronRight size={16} />
                   </span>
                 </button>
-              ))}
-              <button className="grow-item galarm" onClick={() => setNotificationMenu({ target: 'new' })}>
-                <span className="gicon">{sortedNotifications.length === 0 ? <ReminderIcon size={23} /> : null}</span>
-                <span className="glabel gmuted">Add notification</span>
-                <span className="gunfold">
-                  <ChevronDown size={14} />
-                </span>
-              </button>
+              </div>
 
-              <div className="grow-item galarm-choice editor-alarm-swimlane">
-                <span className="gicon">
-                  <RingingBell size={22} />
-                </span>
-                <div className="galarm-choice-body">
-                  <span className="glabel">Alarm</span>
-                  <div className="alarm-chips" role="group" aria-label="Alarm time">
-                    {ALARM_CHOICES.map((m) => (
+              {/* the alarm — the app's signature feature, promoted to its own card */}
+              <div className="gs-section-label is-alarm">Alarm</div>
+              <div className="gs-alarm-card">
+                <div className="gs-alarm-head">
+                  <span className="gs-alarm-bell" aria-hidden="true">
+                    <span className="gs-alarm-ring" />
+                    <RingingBell size={20} />
+                  </span>
+                  <div className="gs-alarm-copy">
+                    <div className="gs-alarm-title">Rings until you stop it</div>
+                    <div className="gs-alarm-sub">A real alarm — even when your phone is on silent.</div>
+                  </div>
+                </div>
+                <div className="gs-alarm-lane" role="group" aria-label="Alarm times">
+                  {alarmChips.map((m) => {
+                    const active = ev.alarms.includes(m);
+                    return (
                       <button
                         key={m}
-                        className="chip-btn"
-                        aria-pressed={ev.alarms.includes(m)}
+                        className="gs-alarm-chip"
+                        aria-pressed={active}
                         onClick={() => toggleAlarm(m)}
                       >
-                        {m} min
+                        {alarmChipLabel(m)}
+                        {active && <span className="x">×</span>}
                       </button>
-                    ))}
-                  </div>
+                    );
+                  })}
+                  {alarmCustomOpen ? (
+                    <span className="gs-alarm-chip gs-alarm-custom">
+                      <input
+                        type="number"
+                        min={0}
+                        autoFocus
+                        placeholder="min"
+                        value={alarmCustomVal}
+                        onChange={(e) => setAlarmCustomVal(e.target.value)}
+                        onBlur={addCustomAlarm}
+                        onKeyDown={(e) => e.key === 'Enter' && addCustomAlarm()}
+                      />
+                    </span>
+                  ) : (
+                    <button className="gs-alarm-chip gs-alarm-add" aria-label="Add custom alarm" onClick={() => setAlarmCustomOpen(true)}>
+                      +
+                    </button>
+                  )}
                 </div>
               </div>
             </>
           )}
 
-          {showMore && (
-            <>
-              <div className="gdiv" />
-
-              {/* repeat */}
-              <div className="grow-item">
-                <span className="gicon">
-                  <Repeat size={22} />
-                </span>
-                <select
-                  className="gselect"
-                  value={recToChoice(ev.recurrence)}
-                  onChange={(e) =>
-                    patch({
-                      recurrence: choiceToRec(e.target.value as RecChoice, ev.start),
-                      exceptions: undefined,
-                    })
-                  }
-                >
-                  <option value="none">Does not repeat</option>
-                  <option value="DAILY">Daily</option>
-                  <option value="WEEKDAYS">Every weekday (Mon–Fri)</option>
-                  <option value="WEEKLY">
-                    Weekly on {new Date(ev.start).toLocaleDateString('en-GB', { weekday: 'long' })}
-                  </option>
-                  <option value="MONTHLY">Monthly on day {new Date(ev.start).getDate()}</option>
-                  <option value="YEARLY">Yearly</option>
-                </select>
-              </div>
-
-              {/* colour */}
-              <div className="grow-item">
-                <span className="gicon">
-                  <Palette size={22} />
-                </span>
-                <span className="glabel">Colour</span>
-                <span className="gswatches">
-                  <button
-                    className="swatch"
-                    aria-pressed={!ev.color}
-                    aria-label="Calendar colour"
-                    style={{
-                      background: state.calendars.find((c) => c.id === ev.calendarId)?.color,
-                      opacity: ev.color ? 0.35 : 1,
-                    }}
-                    onClick={() => patch({ color: undefined })}
-                  />
-                  {EVENT_PALETTE.map((p) => (
-                    <button
-                      key={p.value}
-                      className="swatch"
-                      aria-pressed={ev.color === p.value}
-                      aria-label={p.name}
-                      style={{ background: p.value, opacity: !ev.color || ev.color === p.value ? 1 : 0.35 }}
-                      onClick={() => patch({ color: p.value })}
-                    />
-                  ))}
-                </span>
-              </div>
-
-              {/* description */}
-              <div className="grow-item" style={{ alignItems: 'flex-start' }}>
-                <span className="gicon" style={{ paddingTop: 2 }}>
-                  <Notes size={22} />
-                </span>
-                <textarea
-                  className="ginput"
-                  placeholder="Add description"
-                  rows={2}
-                  value={ev.description ?? ''}
-                  onChange={(e) => patch({ description: e.target.value || undefined })}
-                />
-              </div>
-            </>
-          )}
-
           {!isNew && onDelete && (
-            <>
-              <div className="gdiv" />
-              <button className="grow-item gdelete" onClick={onDelete}>
-                <span className="gicon" />
-                <span className="glabel">Delete event</span>
-              </button>
-            </>
+            <button className="gs-delete" onClick={onDelete}>
+              Delete event
+            </button>
           )}
         </div>
 

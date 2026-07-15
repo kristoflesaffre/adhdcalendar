@@ -6166,3 +6166,475 @@ button.task-ring:active {
     transition: none;
   }
 }
+
+/* ============================================================
+   EventSheet v2 — Claude Design "ADHD Calendar - New Event"
+   Scoped to .gsheet-v2 so TaskEditor/AlarmEditor keep their look.
+   ============================================================ */
+
+.gsheet-v2 {
+  --gs-accent: #206657;
+  --gs-accent-deep: #17493d;
+  --gs-accent-soft: rgba(32, 102, 87, 0.14);
+  --gs-accent-tint: rgba(32, 102, 87, 0.1);
+  --gs-card: #f6f6f3;
+  --gs-card-border: #ececea;
+  --gs-line: #e6e6e2;
+  --gs-chip-border: #cfe0da;
+  --gs-seg-bg: #f2f2ef;
+  --gs-text: #17171a;
+  --gs-text-2: #55555c;
+  --gs-muted: #85858d;
+  --gs-chip-on-ink: #ffffff;
+}
+
+[data-theme='dark'] .gsheet-v2 {
+  --gs-accent: #6fbfab;
+  --gs-accent-deep: #a9d9cb;
+  --gs-accent-soft: rgba(111, 191, 171, 0.18);
+  --gs-accent-tint: rgba(111, 191, 171, 0.14);
+  --gs-card: var(--surface-2);
+  --gs-card-border: #333537;
+  --gs-line: #3a3c3e;
+  --gs-chip-border: #3f5a52;
+  --gs-seg-bg: #282a2c;
+  --gs-text: var(--ink);
+  --gs-text-2: var(--ink-2);
+  --gs-muted: var(--muted);
+  --gs-chip-on-ink: #06231c;
+}
+
+.gsheet-v2 .gsheet-cancel {
+  color: var(--gs-accent);
+}
+
+.gs-save-pill {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--gs-chip-on-ink);
+  background: var(--gs-accent);
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 20px;
+  transition: opacity 140ms ease, transform 120ms ease;
+}
+
+.gs-save-pill:active {
+  transform: scale(0.96);
+}
+
+.gs-save-pill:disabled {
+  opacity: 0.4;
+}
+
+/* title + segmented tabs */
+.gs-title-block {
+  padding: 10px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gs-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gs-title-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gs-accent);
+}
+
+.gsheet-v2 .gsheet-title {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--gs-text);
+}
+
+.gs-seg {
+  display: flex;
+  gap: 6px;
+  background: var(--gs-seg-bg);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.gs-seg-btn {
+  flex: 1;
+  padding: 9px 0;
+  border-radius: 9px;
+  border: 0;
+  background: none;
+  font-size: 14.5px;
+  font-weight: 550;
+  color: var(--gs-text-2);
+}
+
+.gs-seg-btn.is-active {
+  background: var(--surface);
+  font-weight: 650;
+  color: var(--gs-text);
+  box-shadow: 0 1px 3px rgba(20, 20, 24, 0.12);
+}
+
+/* calendar chips */
+.gs-chip-lane {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 16px 16px;
+  scrollbar-width: none;
+}
+
+.gs-chip-lane::-webkit-scrollbar {
+  display: none;
+}
+
+.gs-cal-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1.5px solid var(--gs-line);
+  background: var(--surface);
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--gs-text-2);
+  white-space: nowrap;
+}
+
+.gs-cal-chip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.gs-cal-chip[aria-pressed='true'] {
+  border-color: var(--chip-color, var(--gs-accent));
+  background: color-mix(in srgb, var(--chip-color, var(--gs-accent)) 14%, var(--surface));
+  font-weight: 650;
+  color: var(--gs-text);
+}
+
+/* grouped inset cards */
+.gs-card {
+  margin: 0 16px 14px;
+  background: var(--gs-card);
+  border: 1px solid var(--gs-card-border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.gs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 16px;
+  text-align: left;
+}
+
+.gs-tap:active {
+  background: color-mix(in srgb, var(--gs-line) 45%, transparent);
+}
+
+.gs-ic {
+  flex: none;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gs-muted);
+}
+
+.gs-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 15.5px;
+  color: var(--gs-text);
+}
+
+.gs-muted {
+  color: var(--gs-muted);
+}
+
+.gs-flex {
+  flex: 1;
+}
+
+.gs-sep {
+  height: 1px;
+  background: var(--gs-line);
+  margin-left: 48px;
+}
+
+.gs-chev {
+  flex: none;
+  display: flex;
+  color: color-mix(in srgb, var(--gs-muted) 70%, transparent);
+}
+
+/* date / time chips inside the when card */
+.gs-date-chip {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--gs-text);
+  background: var(--surface);
+  border: 1px solid var(--gs-line);
+  border-radius: 9px;
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+.gs-time-chip {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gs-text);
+  background: var(--surface);
+  border: 1px solid var(--gs-line);
+  border-radius: 9px;
+  padding: 7px 12px;
+}
+
+.gs-time-chip.is-start {
+  color: var(--gs-accent);
+  background: var(--gs-accent-tint);
+  border-color: transparent;
+}
+
+.gs-date-chip.is-open,
+.gs-time-chip.is-open {
+  border-color: var(--gs-accent);
+  color: var(--gs-accent);
+}
+
+.gs-inline {
+  padding: 0 16px 10px;
+}
+
+.gs-inline .mini-month {
+  max-width: 420px;
+}
+
+/* borderless inputs that read as rows */
+.gs-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-ui);
+  font-size: 15.5px;
+  color: var(--gs-text);
+  padding: 0;
+  resize: none;
+}
+
+.gs-input:focus {
+  outline: none;
+}
+
+.gs-input::placeholder {
+  color: var(--gs-muted);
+}
+
+.gs-repeat {
+  position: relative;
+}
+
+.gs-value {
+  flex: none;
+  font-size: 14px;
+  color: var(--gs-text-2);
+  margin-right: 4px;
+}
+
+.gs-select-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  appearance: none;
+}
+
+/* section labels */
+.gs-section-label {
+  padding: 8px 22px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gs-muted);
+}
+
+.gs-section-label.is-alarm {
+  color: var(--gs-accent);
+}
+
+/* alarm card */
+.gs-alarm-card {
+  margin: 0 16px 14px;
+  border-radius: 18px;
+  padding: 16px 0 16px 18px;
+  background: linear-gradient(180deg, var(--gs-accent-soft), color-mix(in srgb, var(--gs-accent) 4%, transparent));
+  border: 1px solid color-mix(in srgb, var(--gs-accent) 22%, transparent);
+}
+
+.gs-alarm-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-right: 18px;
+}
+
+.gs-alarm-bell {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gs-accent);
+}
+
+.gs-alarm-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--gs-accent);
+  animation: gs-ring 2.2s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
+@keyframes gs-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+.gs-alarm-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.gs-alarm-title {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--gs-accent-deep);
+  letter-spacing: -0.01em;
+}
+
+.gs-alarm-sub {
+  font-size: 12.5px;
+  color: var(--gs-accent);
+  opacity: 0.9;
+}
+
+.gs-alarm-lane {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-right: 18px;
+  scrollbar-width: none;
+}
+
+.gs-alarm-lane::-webkit-scrollbar {
+  display: none;
+}
+
+.gs-alarm-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 15px;
+  border-radius: 999px;
+  border: 1.5px solid var(--gs-chip-border);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gs-accent-deep);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.gs-alarm-chip[aria-pressed='true'] {
+  border-color: var(--gs-accent);
+  background: var(--gs-accent);
+  color: var(--gs-chip-on-ink);
+  font-weight: 650;
+}
+
+.gs-alarm-chip .x {
+  opacity: 0.7;
+}
+
+.gs-alarm-add {
+  width: 40px;
+  padding: 9px 0;
+  justify-content: center;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--gs-accent) 45%, var(--surface));
+  font-size: 15px;
+  color: var(--gs-accent);
+}
+
+.gs-alarm-custom {
+  padding: 4px 10px;
+}
+
+.gs-alarm-custom input {
+  width: 52px;
+  border: 0;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gs-accent-deep);
+}
+
+.gs-alarm-custom input:focus {
+  outline: none;
+}
+
+/* delete */
+.gs-delete {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 4px 16px 10px;
+  padding: 13px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--gs-card-border);
+  background: var(--gs-card);
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--danger);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gs-alarm-ring {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.gsheet-v2 .twheel-band {
+  background: var(--gs-accent-tint);
+}
+
+.gsheet-v2 .twheel-item.is-selected {
+  color: var(--gs-accent);
+}
