@@ -5,7 +5,7 @@ import { useStore } from '../state/store';
 import { ensureAudioUnlocked } from '../alarm/sound';
 import { MiniMonth } from './MiniMonth';
 import { ClockWheel } from './TimeWheel';
-import { Camera, ChevronRight, Clock, Close, Notes, ReminderIcon, Repeat, RingingBell } from './icons';
+import { Camera, ChevronDown, ChevronRight, Clock, Close, Notes, ReminderIcon, Repeat, RingingBell } from './icons';
 
 /**
  * Task editor in the same Claude Design language as EventSheet
@@ -191,24 +191,26 @@ export function TaskEditor({ draft, isNew, onSave, onDelete, onClose, onSwitchTo
   };
 
   return (
-    <div className="modal-backdrop task-modal-backdrop">
+    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
       <div
-        className="modal task-modal gsheet-v2"
+        className="modal gsheet gsheet-v2"
         role="dialog"
         aria-modal="true"
         aria-label={isNew ? 'New task' : 'Edit task'}
       >
-        <div className="task-sheet-head">
+        <div className="gsheet-head">
           <button className="gsheet-cancel" onClick={onClose}>
             Cancel
           </button>
-          <strong>{isNew ? 'New task' : 'Edit task'}</strong>
+          <span className="gsheet-grab" aria-hidden="true">
+            <ChevronDown size={22} />
+          </span>
           <button className="gs-save-pill" onClick={save} disabled={!valid}>
             Save
           </button>
         </div>
 
-        <div className="task-sheet-scroll">
+        <div className="gsheet-scroll">
           {/* title + Event/Task segmented control */}
           <div className="gs-title-block">
             <div className="gs-title-row">

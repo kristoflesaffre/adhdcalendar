@@ -6641,14 +6641,6 @@ button.task-ring:active {
 
 /* ---- TaskEditor in the gsheet-v2 design language ---- */
 
-.gsheet-v2 .task-sheet-head strong {
-  color: var(--gs-text-2);
-}
-
-.gsheet-v2 .task-sheet-head .gs-save-pill {
-  justify-self: end;
-}
-
 .gsheet-v2 .task-screenshot-action {
   color: var(--gs-accent);
   font-size: 15.5px;
@@ -6659,6 +6651,3 @@ button.task-ring:active {
   gap: 10px;
 }
 
-.gsheet-v2 .task-sheet-scroll .gs-title-block {
-  padding-top: 22px;
-}
