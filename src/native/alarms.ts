@@ -1,13 +1,21 @@
 import { alarmSoundFileName } from '../alarm/sounds';
+import { AlarmAudio, isNative } from './alarmAudio';
+import type { FallbackNotificationItem } from './alarmAudio';
 
 /**
  * Native alarm bridge for the iOS (Capacitor) wrapper.
  *
  * On the web this is a no-op. Inside the Capacitor shell, every upcoming
- * alarm is scheduled as a *chain* of local notifications (one every 20s,
- * 15 in a row, with the app's real bell sound) so it behaves like a real
- * alarm even when the app is closed: it keeps ringing until you open the
- * app and dismiss it — dismissing cancels the rest of the chain.
+ * alarm is scheduled as a *chain* of local notifications (one every 30s,
+ * up to 15 in a row, with the app's real bell sound) so it behaves like a
+ * real alarm even when the app is force-quit: it keeps ringing until you
+ * open the app and dismiss it — dismissing cancels the rest of the chain.
+ *
+ * The chain is scheduled through AlarmAudioPlugin.syncAlarmNotifications
+ * rather than the LocalNotifications plugin: only native scheduling can
+ * mark the requests .timeSensitive, and without that a Focus mode (Sleep,
+ * Work, Driving) delivers the entire chain silently. The Capacitor plugin
+ * is still used for the permission prompt.
  *
  * The selected bundled `.wav` file is what actually plays. Passing the bare
  * string 'default' here makes iOS look for a bundle resource literally named
@@ -17,8 +25,8 @@ import { alarmSoundFileName } from '../alarm/sounds';
  * A fully force-quit app can only ever be revived by this OS-scheduled
  * chain — no app-level trick survives that. For the (far more common)
  * locked-screen / backgrounded-but-not-quit case, see native/alarmAudio.ts,
- * which keeps the app alive with a background audio session and plays the
- * same bell directly, no notification round-trip needed.
+ * which keeps the app alive with a background audio session and rings the
+ * whole native alarm queue directly, no notification round-trip needed.
  */
 
 interface PendingLike {
@@ -39,15 +47,9 @@ export interface StandardNotificationLike {
 const MAX_CHAIN_LENGTH = 15;
 const CHAIN_GAP_MS = 30_000;
 const FALLBACK_DELAY_MS = 25_000;
-const TEST_ALARM_ID = 999_000_001;
-const TEST_ALARM_THREAD = 'carillon-test-alarm';
 const MAX_PENDING_NOTIFICATIONS = 64;
 const RESERVED_TEST_SLOTS = 1;
 const MAX_STANDARD_NOTIFICATIONS = 18;
-
-function isNative(): boolean {
-  return !!(window as any).Capacitor?.isNativePlatform?.();
-}
 
 /** stable numeric id from a string key + chain index */
 function numericId(key: string, i: number): number {
@@ -98,26 +100,16 @@ async function performNativeAlarmSync(
     const perm = await LocalNotifications.requestPermissions();
     if (perm.display !== 'granted') return;
 
-    // clear previously scheduled, then schedule fresh chains — but leave a
-    // pending test alarm alone, or any state change would silently kill it
-    const existing = await LocalNotifications.getPending();
-    const toCancel = existing.notifications.filter((n) => n.id !== TEST_ALARM_ID);
-    if (toCancel.length) {
-      await LocalNotifications.cancel({
-        notifications: toCancel.map((n) => ({ id: n.id })),
-      });
-    }
-
-    const reminderNotifications = standardNotifications
+    const reminderNotifications: FallbackNotificationItem[] = standardNotifications
       .slice(0, MAX_STANDARD_NOTIFICATIONS)
       .map((notification) => ({
-        id: notificationId(notification.key),
+        id: `carillon-n-${notificationId(notification.key)}`,
+        kind: 'reminder',
+        at: notification.triggerAt,
         title: notification.title,
         body: notification.body,
-        schedule: { at: new Date(notification.triggerAt), allowWhileIdle: true },
         sound: 'notification.wav',
-        threadIdentifier: notification.key,
-        extra: { carillonKind: 'notification' },
+        threadKey: notification.key,
       }));
 
     const sound = alarmSoundFileName(soundId);
@@ -140,32 +132,31 @@ async function performNativeAlarmSync(
 
     // Every protected alarm gets at least one OS-scheduled audible fallback.
     // Remaining slots are distributed evenly as repeat chains.
-    const alarmNotifications = protectedAlarms.flatMap((p, alarmIndex) =>
-      Array.from({ length: chainLengths[alarmIndex] }, (_, i) => ({
-        id: numericId(p.key, i),
-        title: `🔔 ${p.base.title}`,
-        body:
-          (p.base.minutesBefore === 0
-            ? 'Starting now'
-            : `Starts in ${p.base.minutesBefore} min`) +
-          (p.base.location ? ` · ${p.base.location}` : '') +
-          (i > 0 ? '  (still ringing — open to dismiss)' : ''),
-        // The notification chain is only a last-resort fallback for a
-        // force-quit/killed app. Give the native iPhone audio loop first
-        // priority; otherwise iOS may route this notification to Apple Watch
-        // as a small ping before the real phone alarm gets heard.
-        schedule: { at: new Date(p.triggerAt + FALLBACK_DELAY_MS + i * CHAIN_GAP_MS), allowWhileIdle: true },
-        sound,
-        threadIdentifier: p.key,
-        extra: { carillonKind: 'alarm' },
-      })),
+    const alarmNotifications: FallbackNotificationItem[] = protectedAlarms.flatMap(
+      (p, alarmIndex) =>
+        Array.from({ length: chainLengths[alarmIndex] }, (_, i): FallbackNotificationItem => ({
+          id: `carillon-a-${numericId(p.key, i)}`,
+          kind: 'alarm',
+          title: `🔔 ${p.base.title}`,
+          body:
+            (p.base.minutesBefore === 0
+              ? 'Starting now'
+              : `Starts in ${p.base.minutesBefore} min`) +
+            (p.base.location ? ` · ${p.base.location}` : '') +
+            (i > 0 ? '  (still ringing — open to dismiss)' : ''),
+          // The notification chain is only a last-resort fallback for a
+          // force-quit/killed app. Give the native iPhone audio loop first
+          // priority; otherwise iOS may route this notification to Apple Watch
+          // as a small ping before the real phone alarm gets heard.
+          at: p.triggerAt + FALLBACK_DELAY_MS + i * CHAIN_GAP_MS,
+          sound,
+          threadKey: p.key,
+        })),
     );
 
-    const notifications = [...reminderNotifications, ...alarmNotifications];
-
-    if (notifications.length) {
-      await LocalNotifications.schedule({ notifications });
-    }
+    await AlarmAudio.syncAlarmNotifications({
+      notifications: [...reminderNotifications, ...alarmNotifications],
+    });
   } catch {
     // plugin missing (plain web build) — ignore
   }
@@ -175,9 +166,7 @@ async function performNativeAlarmSync(
 export async function cancelNativeAlarm(key: string): Promise<void> {
   if (!isNative()) return;
   try {
-    const { LocalNotifications } = await import('@capacitor/local-notifications');
-    const ids = Array.from({ length: MAX_CHAIN_LENGTH }, (_, i) => ({ id: numericId(key, i) }));
-    await LocalNotifications.cancel({ notifications: ids });
+    await AlarmAudio.cancelAlarmChain({ key });
   } catch {
     // ignore
   }
@@ -219,22 +208,17 @@ export async function requestNotificationPermission(): Promise<NotificationPermS
 }
 
 /** Schedules one real notification a few seconds out — lets you verify
- * sound/behaviour on-device without waiting for a real calendar event. */
+ * sound/behaviour on-device without waiting for a real calendar event.
+ * The native side applies the same fallback delay as real alarms: the
+ * native iPhone ring should happen first; this only proves the fallback. */
 export async function scheduleTestAlarm(afterSeconds: number, soundId?: string): Promise<void> {
   if (!isNative()) return;
-  const { LocalNotifications } = await import('@capacitor/local-notifications');
-  await LocalNotifications.schedule({
-    notifications: [
-      {
-        id: TEST_ALARM_ID,
-        title: '🔔 Test alarm',
-        body: `Scheduled ${afterSeconds}s ago — if you can hear this, alarms work.`,
-        // Same fallback delay as real alarms: the native iPhone ring should
-        // happen first; this notification only proves the fallback path.
-        schedule: { at: new Date(Date.now() + afterSeconds * 1000 + FALLBACK_DELAY_MS) },
-        sound: alarmSoundFileName(soundId),
-        threadIdentifier: TEST_ALARM_THREAD,
-      },
-    ],
-  });
+  try {
+    await AlarmAudio.scheduleTestNotification({
+      afterSeconds,
+      sound: alarmSoundFileName(soundId),
+    });
+  } catch {
+    // ignore
+  }
 }

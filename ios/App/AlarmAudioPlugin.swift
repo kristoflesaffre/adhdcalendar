@@ -51,17 +51,34 @@ final class WatchLink: NSObject, WCSessionDelegate {
     func sessionDidDeactivate(_ session: WCSession) { session.activate() }
 }
 
+/** One upcoming ring, mirrored from the JS alarm engine. */
+private struct QueuedRing: Codable {
+    let at: Double // epoch ms
+    let key: String
+    let title: String?
+    let body: String?
+    let sound: String
+}
+
 /**
  * The real-alarm engine. Keeps the app alive in the background with a
  * near-silent looping audio session (category .playback — the same trick
  * Music/Podcasts use, which also plays through the mute switch), and holds
- * a *native* timer for the next alarm: when it fires, the loud bell loops
- * until stop() is called (the user returning to the app) or a 10-minute
- * safety cap. No JavaScript needs to run at ring time, so a locked phone
- * with a suspended webview still rings.
+ * a *native queue* of upcoming alarms: a native timer fires the first one
+ * (looping the loud bell until stop() or a 10-minute cap), after which the
+ * plugin re-arms itself for the next queued alarm — no JavaScript needs to
+ * run at ring time OR between consecutive alarms, so a locked phone with a
+ * suspended webview rings every alarm on time.
+ *
+ * The queue is persisted (app-group defaults) and restored on launch, and a
+ * catch-up pass runs whenever the app wakes (didBecomeActive / audio
+ * interruption ended): a trigger moment that slipped past while iOS had us
+ * suspended still rings, up to 15 minutes late, instead of staying silent.
  *
  * Only a fully force-quit app escapes this — nothing can revive that
- * except the scheduled local-notification chain (see LocalNotifications).
+ * except the scheduled local-notification chain, which this plugin also
+ * schedules natively (syncAlarmNotifications) so it can carry
+ * .timeSensitive priority and ring through Focus modes.
  */
 @objc(AlarmAudioPlugin)
 public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -75,9 +92,13 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setWidgetData", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "syncTimerActivities", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "syncAlarmNotifications", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cancelAlarmChain", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "scheduleTestNotification", returnType: CAPPluginReturnPromise),
     ]
 
     static let appGroup = "group.be.adhdcalendar.app"
+    static let testAlarmId = "carillon-test-alarm"
 
     public override func load() {
         WatchLink.shared.activate()
@@ -93,22 +114,41 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        // A relaunched app must protect its alarms before the webview has
+        // even loaded: restore the persisted queue and arm immediately.
+        restoreQueue()
+        if !ringQueue.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, !self.isAlarmRinging else { return }
+                if self.player?.isPlaying != true { self.playSilence() }
+                self.armFront()
+            }
+        }
     }
 
     private var player: AVAudioPlayer?
     private var ringTimer: DispatchSourceTimer?
     private var capTimer: DispatchSourceTimer?
     private let maxRingSeconds: Double = 600
+    /** ring up to this many seconds after a missed trigger moment */
+    private let lateRingSeconds: Double = 15 * 60
     private let minAlarmVolume: Float = 0.6
     private let volumeView = MPVolumeView(frame: CGRect(x: -2000, y: -2000, width: 10, height: 10))
     private let bannerId = "alarm-ring-banner"
     private let fallbackAlarmResource = "alarm"
+    private let queueDefaultsKey = "alarm-ring-queue"
+    private var ringQueue: [QueuedRing] = []
     private var ringResource = "alarm"
     private var ringKey: String?
     private var ringTitle: String?
     private var ringBody: String?
     private var isAlarmRinging = false
-    private var scheduledAtMs: Double?
 
     private func activateSession() throws {
         let session = AVAudioSession.sharedInstance()
@@ -139,12 +179,94 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         play(resource: "silence")
     }
 
+    /* ------------------- the native alarm queue ------------------- */
+
+    private func queueDefaults() -> UserDefaults {
+        UserDefaults(suiteName: AlarmAudioPlugin.appGroup) ?? .standard
+    }
+
+    private func persistQueue() {
+        if let data = try? JSONEncoder().encode(ringQueue) {
+            queueDefaults().set(data, forKey: queueDefaultsKey)
+        }
+    }
+
+    private func restoreQueue() {
+        guard let data = queueDefaults().data(forKey: queueDefaultsKey),
+              let queue = try? JSONDecoder().decode([QueuedRing].self, from: data) else { return }
+        let cutoff = Date().timeIntervalSince1970 - lateRingSeconds
+        ringQueue = queue.filter { $0.at / 1000 > cutoff }.sorted { $0.at < $1.at }
+    }
+
+    /**
+     * Arm the native timer for the first queued alarm. A trigger moment that
+     * already slipped past (but is inside the late window) rings immediately —
+     * that's the catch-up path after a suspension or relaunch. Never called
+     * while the bell is ringing; the ring's stop/cap re-arms afterwards.
+     */
+    private func armFront() {
+        ringTimer?.cancel()
+        ringTimer = nil
+        let nowS = Date().timeIntervalSince1970
+        ringQueue.removeAll { $0.at / 1000 <= nowS - lateRingSeconds }
+        persistQueue()
+        guard let next = ringQueue.first else {
+            WatchLink.shared.sendAlarm(at: nil, title: nil)
+            return
+        }
+        ringKey = next.key
+        ringTitle = next.title
+        ringBody = next.body
+        ringResource = validAlarmResource(next.sound)
+        let delay = next.at / 1000 - nowS
+        if delay <= 0.25 {
+            ringQueue.removeFirst()
+            persistQueue()
+            playAlarm()
+            WatchLink.shared.sendAlarm(at: nil, title: nil)
+            return
+        }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + delay, leeway: .milliseconds(100))
+        t.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            if let first = self.ringQueue.first, first.key == self.ringKey {
+                self.ringQueue.removeFirst()
+                self.persistQueue()
+            }
+            self.playAlarm()
+        }
+        t.resume()
+        ringTimer = t
+        // mirror to the watch so it can wake the wrist at the same moment
+        WatchLink.shared.sendAlarm(at: next.at, title: next.title)
+    }
+
+    /** After any wake-up: revive the keep-alive session and ring anything
+     *  whose moment passed while iOS had us suspended. */
+    private func resumeAfterWake() {
+        guard !isAlarmRinging else {
+            if player?.isPlaying != true { _ = play(resource: ringResource) }
+            return
+        }
+        if player?.isPlaying != true, !ringQueue.isEmpty { playSilence() }
+        if let next = ringQueue.first, next.at / 1000 <= Date().timeIntervalSince1970 {
+            armFront() // overdue within the late window — rings now
+        } else if ringTimer == nil, !ringQueue.isEmpty {
+            armFront() // timer died while suspended — re-arm
+        }
+    }
+
     @objc private func handleDidEnterBackground() {
         if isAlarmRinging {
             _ = play(resource: ringResource)
-        } else if scheduledAtMs != nil {
-            playSilence()
+        } else if !ringQueue.isEmpty {
+            if player?.isPlaying != true { playSilence() }
         }
+    }
+
+    @objc private func handleDidBecomeActive() {
+        resumeAfterWake()
     }
 
     @objc private func handleAudioInterruption(_ notification: Notification) {
@@ -154,12 +276,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             let type = AVAudioSession.InterruptionType(rawValue: rawType),
             type == .ended
         else { return }
-
-        if isAlarmRinging {
-            _ = play(resource: ringResource)
-        } else if scheduledAtMs != nil {
-            playSilence()
-        }
+        resumeAfterWake()
     }
 
     private func validAlarmResource(_ resource: String?) -> String {
@@ -280,7 +397,6 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func playAlarm() {
         isAlarmRinging = true
-        scheduledAtMs = nil
         guard play(resource: ringResource) else {
             // Keep the OS-scheduled notification fallback intact when direct
             // playback cannot start. It can still deliver the bundled sound.
@@ -292,13 +408,16 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         cancelCurrentAlarmNotifications()
         ensureLoudEnough()
         showPassiveBanner()
-        // safety cap: after 10 minutes of unanswered ringing, back to keep-alive
+        // safety cap: after 10 minutes of unanswered ringing, hand over to
+        // the keep-alive silence and re-arm for the next queued alarm
         capTimer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now() + maxRingSeconds, leeway: .seconds(1))
         t.setEventHandler { [weak self] in
-            self?.isAlarmRinging = false
-            self?.playSilence()
+            guard let self = self else { return }
+            self.isAlarmRinging = false
+            self.playSilence()
+            self.armFront()
         }
         t.resume()
         capTimer = t
@@ -326,49 +445,57 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             : call.reject("silence.wav could not start")
     }
 
-    /** Arm the native timer for the next alarm (epoch milliseconds). */
+    /**
+     * Replace the native alarm queue with the given upcoming rings
+     * (`queue`: [{at, key, title, body, sound}], sorted or not). The single
+     * `at`/`key`/... form is still accepted for one-off test rings.
+     */
     @objc func scheduleRing(_ call: CAPPluginCall) {
-        guard let atMs = call.getDouble("at") else {
-            call.reject("missing 'at'")
+        var items: [QueuedRing] = []
+        if let queue = call.getArray("queue") {
+            for case let obj as [String: Any] in queue {
+                guard let at = obj["at"] as? Double, let key = obj["key"] as? String else { continue }
+                items.append(QueuedRing(
+                    at: at,
+                    key: key,
+                    title: obj["title"] as? String,
+                    body: obj["body"] as? String,
+                    sound: obj["sound"] as? String ?? fallbackAlarmResource
+                ))
+            }
+        } else if let at = call.getDouble("at") {
+            items.append(QueuedRing(
+                at: at,
+                key: call.getString("key") ?? "single",
+                title: call.getString("title"),
+                body: call.getString("body"),
+                sound: call.getString("sound") ?? fallbackAlarmResource
+            ))
+        } else {
+            call.reject("missing 'queue' or 'at'")
             return
         }
-        ringTitle = call.getString("title")
-        ringBody = call.getString("body")
-        ringKey = call.getString("key")
-        ringResource = validAlarmResource(call.getString("sound"))
+        ringQueue = items.sorted { $0.at < $1.at }
+        persistQueue()
         if player?.isPlaying != true {
             playSilence() // the session must be live before the phone locks
         }
-        guard player?.isPlaying == true else {
-            scheduledAtMs = nil
-            ringKey = nil
+        guard player?.isPlaying == true || isAlarmRinging else {
             call.reject("background audio session could not start")
             return
         }
-        ringTimer?.cancel()
-        let delay = max(0, atMs / 1000 - Date().timeIntervalSince1970)
-        scheduledAtMs = atMs
-        if delay <= 0.25 {
-            playAlarm()
-            WatchLink.shared.sendAlarm(at: nil, title: nil)
-            call.resolve()
-            return
-        }
-        let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now() + delay, leeway: .milliseconds(100))
-        t.setEventHandler { [weak self] in self?.playAlarm() }
-        t.resume()
-        ringTimer = t
-        // mirror to the watch so it can wake the wrist at the same moment
-        WatchLink.shared.sendAlarm(at: atMs, title: ringTitle)
+        // never clobber a bell that is ringing right now — the queue is
+        // armed automatically when it stops
+        if !isAlarmRinging { armFront() }
         call.resolve()
     }
 
     @objc func cancelRing(_ call: CAPPluginCall) {
         ringTimer?.cancel()
         ringTimer = nil
-        scheduledAtMs = nil
-        ringKey = nil
+        ringQueue = []
+        persistQueue()
+        if !isAlarmRinging { ringKey = nil }
         WatchLink.shared.sendAlarm(at: nil, title: nil)
         call.resolve()
     }
@@ -377,19 +504,102 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func ring(_ call: CAPPluginCall) {
         ringKey = call.getString("key")
         ringResource = validAlarmResource(call.getString("sound"))
+        if let key = ringKey {
+            ringQueue.removeAll { $0.key == key }
+            persistQueue()
+        }
         playAlarm()
         call.resolve()
     }
 
-    /** Stop the bell but keep the quiet keep-alive so future alarms work. */
+    /** Stop the bell, keep the quiet keep-alive, and re-arm the next alarm. */
     @objc func stop(_ call: CAPPluginCall) {
         capTimer?.cancel()
         capTimer = nil
         isAlarmRinging = false
-        scheduledAtMs = nil
         ringKey = nil
         playSilence()
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [bannerId])
+        armFront()
+        call.resolve()
+    }
+
+    /* ------------- OS-scheduled notification fallback ------------- */
+
+    /**
+     * Replace all pending fallback notifications (except a running test)
+     * with the given set. Scheduled natively rather than through the
+     * LocalNotifications plugin so alarms carry .timeSensitive priority:
+     * without it, a Focus mode (Sleep!) delivers the whole chain silently.
+     */
+    @objc func syncAlarmNotifications(_ call: CAPPluginCall) {
+        let items = (call.getArray("notifications") ?? []).compactMap { $0 as? [String: Any] }
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { existing in
+            let removable = existing.map(\.identifier).filter { $0 != AlarmAudioPlugin.testAlarmId }
+            if !removable.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: removable)
+            }
+            let nowS = Date().timeIntervalSince1970
+            for obj in items {
+                guard let id = obj["id"] as? String,
+                      let atMs = obj["at"] as? Double,
+                      atMs / 1000 > nowS else { continue }
+                let content = UNMutableNotificationContent()
+                content.title = obj["title"] as? String ?? "Alarm"
+                content.body = obj["body"] as? String ?? ""
+                if let soundFile = obj["sound"] as? String {
+                    content.sound = UNNotificationSound(named: UNNotificationSoundName(soundFile))
+                }
+                if let thread = obj["threadKey"] as? String {
+                    content.threadIdentifier = thread
+                }
+                if #available(iOS 15.0, *) {
+                    content.interruptionLevel = (obj["kind"] as? String == "alarm") ? .timeSensitive : .active
+                }
+                let date = Date(timeIntervalSince1970: atMs / 1000)
+                let comps = Calendar.current.dateComponents(
+                    [.year, .month, .day, .hour, .minute, .second], from: date)
+                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+                center.add(UNNotificationRequest(identifier: id, content: content, trigger: trigger))
+            }
+            call.resolve()
+        }
+    }
+
+    /** Cancel the remaining fallback chain for one alarm key (on dismiss). */
+    @objc func cancelAlarmChain(_ call: CAPPluginCall) {
+        guard let key = call.getString("key") else {
+            call.resolve()
+            return
+        }
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let ids = requests
+                .filter { $0.content.threadIdentifier == key }
+                .map(\.identifier)
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+            call.resolve()
+        }
+    }
+
+    /** One time-sensitive test notification, ~25s after the test ring. */
+    @objc func scheduleTestNotification(_ call: CAPPluginCall) {
+        let after = call.getDouble("afterSeconds") ?? 30
+        let content = UNMutableNotificationContent()
+        content.title = "🔔 Test alarm"
+        content.body = "Scheduled \(Int(after))s ago — if you can hear this, alarms work."
+        content.sound = UNNotificationSound(
+            named: UNNotificationSoundName(call.getString("sound") ?? "alarm.wav"))
+        content.threadIdentifier = AlarmAudioPlugin.testAlarmId
+        if #available(iOS 15.0, *) {
+            content.interruptionLevel = .timeSensitive
+        }
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, after + 25), repeats: false)
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: AlarmAudioPlugin.testAlarmId, content: content, trigger: trigger))
         call.resolve()
     }
 }

@@ -4,7 +4,7 @@ import { MS_DAY, MS_MIN, fmtOffset } from '../lib/dates';
 import { expandEvents, expandTasks } from '../lib/recurrence';
 import { syncNativeAlarms } from '../native/alarms';
 import type { StandardNotificationLike } from '../native/alarms';
-import { armNativeRing, ringNativeAlarm, startBackgroundKeepAlive } from '../native/alarmAudio';
+import { ringNativeAlarm, startBackgroundKeepAlive, syncNativeRingQueue } from '../native/alarmAudio';
 
 const FIRED_KEY = 'carillon.fired.v1';
 const SNOOZE_KEY = 'carillon.snoozes.v1';
@@ -248,22 +248,24 @@ export function useAlarmEngine(state: AppState): {
       }
       if (due.length || pruned) saveJson(FIRED_KEY, fired);
 
-      const nextFuture = pending.find((p) => p.triggerAt > now && !(p.key in fired)) ?? null;
-      setNextAlarm(nextFuture);
-      // keep the NATIVE timer pointed at the next alarm, so a locked phone
-      // with a suspended webview still rings on time
-      void armNativeRing(
-        nextFuture ? nextFuture.triggerAt : null,
-        nextFuture ? `🔔 ${nextFuture.base.title}` : undefined,
-        nextFuture
-          ? (nextFuture.base.minutesBefore === 0
+      const futureQueue = pending.filter((p) => p.triggerAt > now && !(p.key in fired));
+      setNextAlarm(futureQueue[0] ?? null);
+      // keep the NATIVE alarm queue mirrored, so a locked phone with a
+      // suspended webview still rings every upcoming alarm on time — the
+      // plugin re-arms itself between consecutive alarms without JS
+      void syncNativeRingQueue(
+        futureQueue.slice(0, 32).map((p) => ({
+          at: p.triggerAt,
+          key: p.key,
+          title: `🔔 ${p.base.title}`,
+          body:
+            (p.base.minutesBefore === 0
               ? 'Starting now'
-              : `Starts in ${nextFuture.base.minutesBefore} min`) +
-              (nextFuture.base.location ? ` · ${nextFuture.base.location}` : '') +
-              ' — ringing, open the app to stop'
-          : undefined,
+              : `Starts in ${p.base.minutesBefore} min`) +
+            (p.base.location ? ` · ${p.base.location}` : '') +
+            ' — ringing, open the app to stop',
+        })),
         stateRef.current.settings.alarmSound,
-        nextFuture?.key,
       );
     };
 
