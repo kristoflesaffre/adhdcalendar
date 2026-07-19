@@ -77,8 +77,7 @@ private struct QueuedRing: Codable {
  *
  * Only a fully force-quit app escapes this — nothing can revive that
  * except the scheduled local-notification chain, which this plugin also
- * schedules natively (syncAlarmNotifications) so it can carry
- * .timeSensitive priority and ring through Focus modes.
+ * schedules natively (syncAlarmNotifications) with the bundled alarm sound.
  */
 @objc(AlarmAudioPlugin)
 public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -529,8 +528,8 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
     /**
      * Replace all pending fallback notifications (except a running test)
      * with the given set. Scheduled natively rather than through the
-     * LocalNotifications plugin so alarms carry .timeSensitive priority:
-     * without it, a Focus mode (Sleep!) delivers the whole chain silently.
+     * LocalNotifications plugin so the app can manage the complete fallback
+     * chain and its bundled sound in one native operation.
      */
     @objc func syncAlarmNotifications(_ call: CAPPluginCall) {
         let items = (call.getArray("notifications") ?? []).compactMap { $0 as? [String: Any] }
@@ -555,7 +554,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
                     content.threadIdentifier = thread
                 }
                 if #available(iOS 15.0, *) {
-                    content.interruptionLevel = (obj["kind"] as? String == "alarm") ? .timeSensitive : .active
+                    content.interruptionLevel = .active
                 }
                 let date = Date(timeIntervalSince1970: atMs / 1000)
                 let comps = Calendar.current.dateComponents(
@@ -585,7 +584,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /** One time-sensitive test notification, ~25s after the test ring. */
+    /** One audible test notification, ~25s after the test ring. */
     @objc func scheduleTestNotification(_ call: CAPPluginCall) {
         let after = call.getDouble("afterSeconds") ?? 30
         let content = UNMutableNotificationContent()
@@ -595,7 +594,7 @@ public class AlarmAudioPlugin: CAPPlugin, CAPBridgedPlugin {
             named: UNNotificationSoundName(call.getString("sound") ?? "alarm.wav"))
         content.threadIdentifier = AlarmAudioPlugin.testAlarmId
         if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
+            content.interruptionLevel = .active
         }
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, after + 25), repeats: false)
         UNUserNotificationCenter.current().add(

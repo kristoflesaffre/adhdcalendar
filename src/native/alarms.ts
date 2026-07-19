@@ -12,10 +12,9 @@ import type { FallbackNotificationItem } from './alarmAudio';
  * open the app and dismiss it — dismissing cancels the rest of the chain.
  *
  * The chain is scheduled through AlarmAudioPlugin.syncAlarmNotifications
- * rather than the LocalNotifications plugin: only native scheduling can
- * mark the requests .timeSensitive, and without that a Focus mode (Sleep,
- * Work, Driving) delivers the entire chain silently. The Capacitor plugin
- * is still used for the permission prompt.
+ * rather than the LocalNotifications plugin, so the complete audible chain
+ * can be replaced atomically. The Capacitor plugin is still used for the
+ * permission prompt.
  *
  * The selected bundled `.wav` file is what actually plays. Passing the bare
  * string 'default' here makes iOS look for a bundle resource literally named
